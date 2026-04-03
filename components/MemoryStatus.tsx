@@ -42,8 +42,8 @@ export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, ha
 
     // --- GEOMETRIC DOMAIN MAPPER (The Octad) ---
     const categorize = (id: string, name: string, tags: string[] = []): string => {
-        const upperId = id.toUpperCase().trim();
-        const combined = [...tags, name].map(s => s.toUpperCase().trim());
+        const upperId = String(id || '').toUpperCase().trim();
+        const combined = [...(tags || []), name].map(s => String(s || '').toUpperCase().trim());
         
         // 0. ID Override (Highest Priority for UBP Laws)
         // If the ID itself declares it is a LAW, it is Imperative regardless of tags like #physics.
@@ -61,23 +61,23 @@ export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, ha
 
         // 2. Specific Subject Mapping (Subject Tags -> Geometric Domain)
         
-        // MEANING: English, Vocabulary, Language
-        if (combined.some(s => s === 'ENGLISH' || s === 'VOCABULARY' || s.includes('VOCAB'))) return 'MEANING';
+        // MEANING: English, Vocabulary, Language, Epistemic
+        if (combined.some(s => s === 'ENGLISH' || s === 'VOCABULARY' || s.includes('VOCAB') || s === 'EPISTEMIC' || s === 'CATEGORICAL')) return 'MEANING';
 
-        // MECHANISM: Physics, Earth Science
-        if (combined.some(s => s === 'PHYSICS' || s === 'EARTH' || s.includes('EARTH_SCIENCE'))) return 'MECHANISM';
+        // MECHANISM: Physics, Earth Science, Thermal, Nuclear, Action
+        if (combined.some(s => s === 'PHYSICS' || s === 'EARTH' || s.includes('EARTH_SCIENCE') || s === 'THERMAL' || s === 'NUCLEAR' || s === 'ACTION' || s === 'PHASE_TRANSITION')) return 'MECHANISM';
 
-        // QUANTITY: Math, Mathematics
-        if (combined.some(s => s === 'MATH' || s === 'MATHEMATICS')) return 'QUANTITY';
+        // QUANTITY: Math, Mathematics, Topology, Scale, Numeric
+        if (combined.some(s => s === 'MATH' || s === 'MATHEMATICS' || s === 'TOPOLOGY' || s.includes('SCALE') || s.includes('NUMERIC') || s === 'COMPARISON' || s === 'COMPARATOR')) return 'QUANTITY';
 
-        // SUBSTANCE: Chemistry
-        if (combined.some(s => s === 'CHEMISTRY')) return 'SUBSTANCE';
+        // SUBSTANCE: Chemistry, Bonding, Mass, State
+        if (combined.some(s => s === 'CHEMISTRY' || s === 'BONDING' || s === 'MASS' || s === 'STATE' || s === 'PROPERTY' || s === 'STRUCTURAL')) return 'SUBSTANCE';
 
         // ORGANISM: Psychology, Biology
         if (combined.some(s => s === 'PSYCHOLOGY' || s === 'BIOLOGY')) return 'ORGANISM';
 
-        // ALGORITHM: Python, CS
-        if (combined.some(s => s === 'PYTHON' || s === 'CS' || s === 'COMPUTER SCIENCE')) return 'ALGORITHM';
+        // ALGORITHM: Python, CS, Operator, Information, Process
+        if (combined.some(s => s === 'PYTHON' || s === 'CS' || s === 'COMPUTER SCIENCE' || s === 'OPERATOR' || s === 'INFORMATION' || s === 'PROCESS' || s === 'LOGIC')) return 'ALGORITHM';
 
 
         // 3. Comprehensive Pattern Inference (Broad Keywords)
@@ -160,15 +160,33 @@ export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, ha
             }
             
             list.forEach((item: any) => {
-                const tags = item.tags || [];
-                const id = item.ubp_id || 'UNKNOWN';
-                const name = item.name || item.lexicon || 'Untitled';
+                let tags: string[] = [];
+                let id = 'UNKNOWN';
+                let name = 'Untitled';
+                let fingerprint = undefined;
+                let nrci = undefined;
+
+                if (Array.isArray(item)) {
+                    // New array-based format based on _fields: ["ubp_id", "lexicon", "tags", "vector", "nrci_str", "nrci_val", "tax_str", "mog_tensor"]
+                    id = item[0] || 'UNKNOWN';
+                    name = item[1] || 'Untitled';
+                    tags = item[2] || [];
+                    nrci = item[5];
+                } else {
+                    // Old object-based format
+                    tags = item.tags || [];
+                    id = item.ubp_id || 'UNKNOWN';
+                    name = item.name || item.lexicon || 'Untitled';
+                    fingerprint = item.fingerprint;
+                    nrci = item.atlas?.nrci_score ?? item.nrci;
+                }
+
                 entries.push({
                     id: id,
                     name: name,
                     tags: tags,
-                    fingerprint: item.fingerprint,
-                    nrci: item.atlas?.nrci_score ?? item.nrci,
+                    fingerprint: fingerprint,
+                    nrci: nrci,
                     raw: 'JSON Object',
                     category: categorize(id, name, tags),
                     source: source

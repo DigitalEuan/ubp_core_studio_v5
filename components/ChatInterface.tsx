@@ -156,7 +156,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMe
     <div className="flex flex-col h-full bg-[#111] border-r border-gray-800">
       <div className="p-4 border-b border-gray-800 bg-[#151515] shrink-0">
         <h2 className="text-[11px] font-black text-white flex items-center gap-2 uppercase tracking-[0.25em] mb-3">
-          Assistant v4.2.7 Memory
+          UBP Assistant v5
         </h2>
         <div className="flex items-center gap-1">
           {phases.map((p) => (

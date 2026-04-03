@@ -149,7 +149,7 @@ export class LocalLLMService {
         .map(f => `--- File: ${f.name} ---\n${truncate(f.content, 10000)}`)
         .join('\n\n');
 
-      const systemPrompt = `You are the UBP Research Cortex (v4.2.7) running locally on Mac.
+      const systemPrompt = `You are the UBP Research Cortex (v5) AI Assistant running locally on Mac.
 You have access to Python (Pyodide) for code execution and can help with:
 - UBP (Universal Binary Principle) research
 - Python script development

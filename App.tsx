@@ -88,7 +88,7 @@ export const App: React.FC = () => {
     {
       id: 'welcome',
       role: 'model',
-      content: 'Welcome to UBP Core Studio v4.2.7 (FOM). I am ready to assist with your studies.',
+      content: 'Welcome to UBP Core Studio v5.0. I am ready to assist with your studies.',
       timestamp: Date.now()
     }
   ]);
@@ -1088,7 +1088,7 @@ except Exception as e:
         <div className="flex items-center gap-3">
           <UBPLogo />
           <div>
-            <h1 className="text-lg font-bold text-cyan-400 leading-tight">UBP Core Studio v4.2.7</h1>
+            <h1 className="text-lg font-bold text-cyan-400 leading-tight">UBP Core Studio v5</h1>
             <div className="text-[10px] text-gray-500">Reflexive Memory • Frame of Mind • Local AI</div>
           </div>
         </div>
