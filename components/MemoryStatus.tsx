@@ -7,6 +7,7 @@ interface MemoryStatusProps {
   hashMemoryKb: string;
   beliefsKb: string;
   studyKb?: string;
+  onSyncGitHub?: () => void;
 }
 
 interface ParsedEntry {
@@ -33,7 +34,7 @@ interface CategoryStat {
   percent: string;
 }
 
-export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, hashMemoryKb, beliefsKb, studyKb }) => {
+export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, hashMemoryKb, beliefsKb, studyKb, onSyncGitHub }) => {
 
   const { parsedSystem, categoryStats } = useMemo(() => {
     const entries: ParsedEntry[] = [];
@@ -335,7 +336,22 @@ export const MemoryStatus: React.FC<MemoryStatusProps> = ({ systemKb, langKb, ha
     <div className="flex flex-col h-full bg-[#111] overflow-hidden">
       
       {/* Header Stats */}
-      <div className="grid grid-cols-3 gap-2 p-4 border-b border-gray-800 bg-[#151515]">
+      <div className="flex justify-between items-center px-4 pt-4 pb-2 bg-[#151515]">
+        <h2 className="text-[11px] font-black text-white flex items-center gap-2 uppercase tracking-[0.25em]">
+          Memory Status
+        </h2>
+        {onSyncGitHub && (
+            <button 
+                onClick={onSyncGitHub}
+                className="px-3 py-1 bg-blue-900/40 hover:bg-blue-800/60 border border-blue-500/50 text-blue-300 text-[10px] uppercase tracking-wider rounded transition-colors flex items-center gap-1"
+                title="Force refresh Knowledge Bases from GitHub"
+            >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Sync with GitHub
+            </button>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2 p-4 pt-2 border-b border-gray-800 bg-[#151515]">
         <div className="bg-purple-900/20 border border-purple-500/30 p-3 rounded">
             <div className="text-[10px] uppercase text-purple-400 font-bold tracking-widest">Geometric Nodes</div>
             <div className="text-2xl font-mono text-white">{parsedSystem.entries.length}</div>

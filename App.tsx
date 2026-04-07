@@ -468,13 +468,6 @@ export const App: React.FC = () => {
             }
         } catch (err) { }
 
-        // Updated Hex Dictionary to default to JSON files
-        const hexDictCode = `"""UBP HexDictionary v4.x Exact"""\nimport hashlib\nimport json\nimport os\nimport re\nfrom fractions import Fraction\nfrom typing import Dict, List, Tuple, Optional, Any\nclass HexDictionaryV4Exact:\n    def __init__(self):\n        self.registry = {}\n        self.id_map = {}\n        self.tag_index = {}\n    def load_memory(self, json_file="ubp_system_kb.json", md_file="ubp_system_kb.md"):\n        target = json_file if os.path.exists(json_file) else (md_file if os.path.exists(md_file) else None)\n        if not target: return\n        with open(target, 'r') as f: raw = f.read().strip()\n        if raw.startswith('{') or raw.startswith('['):\n            try:\n                data = json.loads(raw)\n                if isinstance(data, dict): \n                   for _, entry in data.items(): self._register_entry(entry)\n                elif isinstance(data, list):\n                   for entry in data: self._register_entry(entry)\n                return\n            except: pass\n        self._parse_markdown(raw)\n    def _parse_markdown(self, content):\n        current = {}\n        for line in content.split('\\n'):\n            if line.startswith("### UBP-") or line.startswith("## UBP-"):\n                if "ubp_id" in current: self._register_entry(current)\n                parts = line.split(":", 1)\n                current = {"ubp_id": parts[0].replace("#", "").strip(), "name": parts[1].strip() if len(parts)>1 else "Unknown", "tags": []}\n            elif "**Math**:" in line: current["math"] = line.split(":", 1)[1].strip()\n            elif "**Language**:" in line: current["language"] = line.split(":", 1)[1].strip()\n            elif "**Script**:" in line: current["script"] = line.split(":", 1)[1].strip()\n            elif "**Tags**:" in line: current["tags"] = [t.strip() for t in line.split(":", 1)[1].strip().split(",")]\n        if "ubp_id" in current: self._register_entry(current)\n    def _register_entry(self, entry):\n        if "math" not in entry: entry["math"] = "0"\n        if "fingerprint" not in entry:\n            entry["fingerprint"] = hashlib.sha256(f"{entry.get('math','')}|{entry.get('language','')}|{entry.get('script','')}".encode("utf-8")).hexdigest()\n        self.registry[entry["fingerprint"]] = entry\nHEX_DB_EXACT = HexDictionaryV4Exact()`;
-        
-        if (!initialFiles.find(f => f.name === 'hex_dictionary_v4_exact.py')) {
-             initialFiles.push({ name: 'hex_dictionary_v4_exact.py', content: hexDictCode, type: 'script' });
-        }
-
         // Set files state
         setFiles(prev => {
             const combined = [...prev];
@@ -1081,6 +1074,32 @@ except Exception as e:
     window.location.reload();
   };
 
+  const handleSyncKBsFromGitHub = async () => {
+    try {
+        const sysUrl = 'https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/system_kb/ubp_system_kb.json';
+        const langUrl = 'https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_lang_kb_combined_v4.json';
+        
+        const [sysRes, langRes] = await Promise.all([
+            fetch(sysUrl).catch(() => null),
+            fetch(langUrl).catch(() => null)
+        ]);
+
+        if (sysRes?.ok) {
+            const text = await sysRes.text();
+            setSystemKb(text);
+            if (isPyodideReady) await pyodideService.writeFile('ubp_system_kb.json', text);
+        }
+        if (langRes?.ok) {
+            const text = await langRes.text();
+            setLangKb(text);
+            if (isPyodideReady) await pyodideService.writeFile('ubp_lang_kb_combined_v4.json', text);
+        }
+        addConsoleLog('system', 'Successfully synced Knowledge Bases from GitHub.');
+    } catch (err) {
+        addConsoleLog('error', 'Failed to sync Knowledge Bases from GitHub.');
+    }
+  };
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-black text-white overflow-hidden font-sans">
       {/* GLOBAL HEADER */}
@@ -1328,7 +1347,7 @@ except Exception as e:
                         )}
                     </div>
                 )}
-                {activeOutputTab === 'memory' && <MemoryStatus systemKb={systemKb} langKb={langKb} hashMemoryKb={hashMemoryKb} beliefsKb={beliefsKb} studyKb={studyKb} />}
+                {activeOutputTab === 'memory' && <MemoryStatus systemKb={systemKb} langKb={langKb} hashMemoryKb={hashMemoryKb} beliefsKb={beliefsKb} studyKb={studyKb} onSyncGitHub={handleSyncKBsFromGitHub} />}
                 {activeOutputTab === 'fom' && <FOMStatus isPyodideReady={isPyodideReady} frames={fomFrames} activeFrameId={activeFrame} onSwitchFrame={handleSwitchFrame} onUpdateFrameJson={handleUpdateFOMJson} onDeleteFrame={handleDeleteFrame} onRefresh={fetchFOMState} onExportFOM={() => { const blob = new Blob([JSON.stringify(fomFrames, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'ubp_fom_index.json'; a.click(); }} onImportFOM={handleImportFOM} />}
             </div>
         </div>
