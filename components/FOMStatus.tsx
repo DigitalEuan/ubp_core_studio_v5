@@ -144,9 +144,9 @@ export const FOMStatus: React.FC<FOMStatusProps> = ({
           
           {frames.map((frame) => (
             <div key={frame.frame_id} className="space-y-1">
-              <button
+              <div
                 onClick={() => onSwitchFrame(frame.frame_id)}
-                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors cursor-pointer ${
                   activeFrameId === frame.frame_id
                     ? 'bg-cyan-900/40 text-cyan-100 border border-cyan-700'
                     : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-transparent'
@@ -167,7 +167,7 @@ export const FOMStatus: React.FC<FOMStatusProps> = ({
                     </button>
                   </div>
                 </div>
-              </button>
+              </div>
 
               {/* Frame Details / Editor */}
               {expandedFrame === frame.frame_id && (

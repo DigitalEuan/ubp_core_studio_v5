@@ -18,6 +18,7 @@ import { MemoryStatus } from './components/MemoryStatus';
 import { FOMStatus } from './components/FOMStatus';
 import { AIProviderSelector } from './components/AIProviderSelector';
 import { marked } from 'marked';
+import { setIndexedDB, getIndexedDB, clearIndexedDB } from './lib/storage';
 
 const UBPLogo = () => (
   <svg width="28" height="28" viewBox="0 0 100 100" className="drop-shadow-md">
@@ -300,9 +301,9 @@ export const App: React.FC = () => {
     }
   }, [systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, isPyodideReady]);
 
-  // Auto-save session to localStorage
+  // Auto-save session to IndexedDB
   useEffect(() => {
-    const saveSession = () => {
+    const saveSession = async () => {
       if (isResettingRef.current || !hasLoadedInitialData) return;
       try {
         const sessionData = {
@@ -321,7 +322,7 @@ export const App: React.FC = () => {
           activeFrame,
           timestamp: Date.now()
         };
-        localStorage.setItem('ubp_auto_save', JSON.stringify(sessionData));
+        await setIndexedDB('ubp_auto_save', sessionData);
       } catch (e) {
         console.warn('Failed to auto-save session:', e);
       }
@@ -335,11 +336,17 @@ export const App: React.FC = () => {
   useEffect(() => {
     const loadResources = async () => {
       try {
-        // Check for auto-save first
-        const saved = localStorage.getItem('ubp_auto_save');
+        // Check for auto-save first from IndexedDB, fallback to localStorage
+        let saved = await getIndexedDB('ubp_auto_save');
+        if (!saved) {
+           const local = localStorage.getItem('ubp_auto_save');
+           if (local) {
+               try { saved = JSON.parse(local); } catch (e) {}
+           }
+        }
         let hasAutoSave = false;
         if (saved) {
-           const data = JSON.parse(saved);
+           const data = saved;
            if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) { // 24 hours
               hasAutoSave = true;
               if (data.files && data.files.length > 0) setFiles(data.files);
@@ -1071,7 +1078,9 @@ except Exception as e:
   const handleResetKernel = () => {
     isResettingRef.current = true;
     localStorage.removeItem('ubp_auto_save');
-    window.location.reload();
+    clearIndexedDB('ubp_auto_save').catch(() => {}).finally(() => {
+      window.location.reload();
+    });
   };
 
   const handleSyncKBsFromGitHub = async () => {
