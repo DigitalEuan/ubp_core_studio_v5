@@ -1,5 +1,30 @@
 
+// @ts-nocheck
+/// <reference types="@react-three/fiber" />
+
 import React, { useMemo, useRef, useState, useEffect } from 'react';
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      mesh: any;
+      sphereGeometry: any;
+      meshStandardMaterial: any;
+      points: any;
+      bufferGeometry: any;
+      bufferAttribute: any;
+      pointsMaterial: any;
+      ambientLight: any;
+      pointLight: any;
+      directionalLight: any;
+      gridHelper: any;
+      axesHelper: any;
+      lineBasicMaterial: any;
+      color: any;
+    }
+  }
+}
+
 import { createPortal } from 'react-dom';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, Html } from '@react-three/drei';

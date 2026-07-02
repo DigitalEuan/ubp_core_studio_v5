@@ -1,0 +1,449 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# §01  SUBSTRATE — FULL MASTER (v3.7.7 Rebuild)
+# ══════════════════════════════════════════════════════════════════════════════
+# v3.7.7: Rebuilt from v3.7.6 minimal to add:
+#   - Priority vocabulary (90+ essential concepts with deterministic vectors)
+#   - Full CRG (57+ curated physics edges, not just 8)
+#   - NRCI fix (0.5 for degenerate centroids, not 0.0)
+#   - Alias map (30+ hardcoded aliases for KB lookups)
+#   - Thesis-friendly edge filtering (skip lattice_adjacent in synthesis)
+#   - Better MOG category derivation (quadrant-based, not weight-mod)
+from __future__ import annotations
+import sys, os, re, json, math, hashlib
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple, Any, Set
+from collections import defaultdict, deque
+
+# IMPORT HARDENED CONFIG
+from GLM00_config import KB_SYSTEM_PATH, KB_LANG_PATH
+
+# ── 1. MOG CATEGORIES ──────────────────────────────────────────────────
+MOG_CATEGORIES = [
+    "M_Mass", "M_Charge", "M_Space", "M_Time", "M_Thermal", "M_Count",
+    "I_Topology", "I_Symmetry", "I_Density", "I_Connectivity", "I_Dimension", "I_Complexity",
+    "A_Energy", "A_Force", "A_Velocity", "A_Flux", "A_Resonance", "A_Spin",
+    "P_Probability", "P_Ratio", "P_Limit", "P_Tax", "P_Coherence", "P_Phase"
+]
+
+# ── 2. HEX-PACKING HELPERS ─────────────────────────────────────────────
+def vector_to_hex_int(vec: List[int]) -> int:
+    val = 0
+    for i, b in enumerate(vec):
+        if b: val |= 1 << (23 - i)
+    return val
+
+def fast_hamming(a: int, b: int) -> int:
+    return (a ^ b).bit_count()
+
+def get_domain(hex_int: int) -> int:
+    return (hex_int >> 21) & 0b111
+
+# ── 3. BINARY LINEAR ALGEBRA ───────────────────────────────────────────
+class BinaryLinearAlgebra:
+    @staticmethod
+    def hamming_distance(u, v):
+        if isinstance(u, int) and isinstance(v, int):
+            return (u ^ v).bit_count()
+        if isinstance(u, (list, tuple)) and isinstance(v, (list, tuple)):
+            if len(u) == 24 and len(v) == 24:
+                return (vector_to_hex_int(u) ^ vector_to_hex_int(v)).bit_count()
+        return sum(1 for a, b in zip(u, v) if a != b)
+
+    @staticmethod
+    def fold24_to3(vec):
+        v = list(vec)
+        for n in (12, 6, 3):
+            v = [v[2*i] ^ v[2*i+1] for i in range(n)]
+        return v
+
+BLA = BinaryLinearAlgebra
+
+# ── 4. GOLAY & LEECH ENGINES (v3.7.7: NRCI fix) ───────────────────────
+class _GolayCodeEngine:
+    def snap_to_codeword(self, v24):
+        return list(v24), {"anchor_distance": 0, "anchor_id": "self"}
+
+class _LeechLatticeEngine:
+    def __init__(self, golay): self.golay = golay
+    def calculate_nrci(self, vec):
+        w = sum(vec)
+        # v3.7.7 fix: return 0.5 (neutral) for degenerate centroids, not 0.0
+        if w == 0 or w == 24: return 0.5
+        return max(0.0, 1.0 - abs(w - 12) / 12.0)
+    def calculate_symmetry_tax(self, vec):
+        sextets = [vec[i:i+6] for i in range(0, 24, 6)]
+        weights = [sum(s) for s in sextets]
+        avg = sum(weights) / 4.0
+        return sum(abs(w - avg) for w in weights)
+
+GOLAY_ENGINE = _GolayCodeEngine()
+LEECH_ENGINE = _LeechLatticeEngine(GOLAY_ENGINE)
+
+# ── 5. CONCEPT RELATION GRAPH (v3.7.7: full 57+ edges) ────────────────
+EDGE_LABELS: Set[str] = {
+    "is_a", "has_property", "depends_on", "commutes_with",
+    "scales_as", "is_dual_to", "generates", "measures",
+    "lattice_adjacent", "lattice_adjacent_1", "lattice_adjacent_2",
+    "lattice_adjacent_3", "lattice_adjacent_4", "lattice_adjacent_5",
+    "auto_proposed", "contradicts", "incompatible_with",
+}
+
+@dataclass
+class CRGEdge:
+    src: str; label: str; dst: str
+    def reverse(self):
+        if self.label in ("commutes_with", "is_dual_to", "lattice_adjacent") or self.label.startswith("lattice_adjacent_"):
+            return CRGEdge(self.dst, self.label, self.src)
+        return self
+
+class ConceptRelationGraph:
+    def __init__(self):
+        self.out = defaultdict(list); self.into = defaultdict(list); self.edges = []
+    def add_edge(self, src, label, dst):
+        if label not in EDGE_LABELS and not label.startswith("lattice_adjacent_") and label not in ("auto_proposed","contradicts","incompatible_with"): return False
+        src, dst = src.lower().strip(), dst.lower().strip()
+        if not src or not dst: return False
+        edge = CRGEdge(src=src, label=label, dst=dst)
+        self.edges.append(edge); self.out[src].append(edge); self.into[dst].append(edge)
+        if label in ("commutes_with","is_dual_to","contradicts","incompatible_with") and src != dst:
+            rev = CRGEdge(src=dst, label=label, dst=src)
+            self.edges.append(rev); self.out[dst].append(rev); self.into[src].append(rev)
+        return True
+    def neighbours(self, node, label=None):
+        es = self.out.get(node.lower(), [])
+        return [e for e in es if label is None or e.label == label] if label else list(es)
+    def relate(self, a, b):
+        a, b = a.lower(), b.lower(); labels = []
+        for e in self.out.get(a, []):
+            if e.dst == b: labels.append(e.label)
+        for e in self.out.get(b, []):
+            if e.dst == a and e.label in ("commutes_with","is_dual_to"): labels.append(e.label)
+        return labels
+    def shortest_path(self, src, dst, max_hops=3):
+        src, dst = src.lower(), dst.lower()
+        if src == dst: return []
+        visited = {src}; queue = deque([(src, [])])
+        while queue:
+            node, path = queue.popleft()
+            if len(path) >= max_hops: continue
+            for e in self.out.get(node, []):
+                if e.dst == dst: return path + [e]
+                if e.dst not in visited: visited.add(e.dst); queue.append((e.dst, path+[e]))
+        return []
+    def vocab_check(self, vocab_words):
+        nodes = set()
+        for e in self.edges: nodes.add(e.src); nodes.add(e.dst)
+        missing = sorted(n for n in nodes if n not in vocab_words)
+        kept = sum(1 for e in self.edges if e.src in vocab_words and e.dst in vocab_words)
+        return kept, missing
+    def stats(self):
+        return {"total_edges": len(self.edges), "nodes": len({n for e in self.edges for n in (e.src, e.dst)})}
+
+# Full curated physics edges (57+ — restored from original monolith)
+_RAW_EDGES = [
+    # identities / classifications
+    ("hamiltonian","is_a","operator"), ("lagrangian","is_a","functional"),
+    ("propagator","is_a","function"), ("weyl anomaly","is_a","anomaly"),
+    ("rayleigh number","is_a","number"), ("chern number","is_a","number"),
+    ("parafermion","is_a","fermion"), ("majorana","is_a","fermion"),
+    ("quark","is_a","fermion"), ("gluon","is_a","boson"),
+    ("density matrix","is_a","operator"), ("commutator","is_a","operator"),
+    ("anticommutator","is_a","operator"), ("ground state","is_a","state"),
+    ("coherent state","is_a","state"), ("squeezed state","is_a","state"),
+    ("projector","is_a","operator"), ("hadron","is_a","particle"),
+    # has_property
+    ("majorana","has_property","topological"), ("weyl anomaly","has_property","conformal"),
+    ("quark","has_property","massive"), ("gluon","has_property","massless"),
+    ("photon","has_property","massless"), ("hubbard","has_property","strong"),
+    # depends_on
+    ("beta","depends_on","coupling"), ("anomaly","depends_on","dimension"),
+    ("weyl anomaly","depends_on","metric"), ("weyl anomaly","depends_on","curvature"),
+    ("renormalization","depends_on","regulator"), ("rayleigh number","depends_on","prandtl"),
+    ("convection","depends_on","rayleigh number"), ("parton","depends_on","scale"),
+    ("hubbard","depends_on","tunneling"), ("hubbard","depends_on","interaction"),
+    # commutes_with (symmetric)
+    ("hamiltonian","commutes_with","symmetry"), ("projector","commutes_with","hamiltonian"),
+    ("density matrix","commutes_with","hamiltonian"), ("number","commutes_with","hamiltonian"),
+    ("spin","commutes_with","hamiltonian"),
+    # scales_as
+    ("rayleigh number","scales_as","temperature"), ("propagator","scales_as","momentum"),
+    ("hubbard","scales_as","tunneling"), ("dispersion","scales_as","wavenumber"),
+    # is_dual_to (symmetric)
+    ("ads","is_dual_to","bcft"), ("holographic","is_dual_to","conformal"),
+    ("brane","is_dual_to","boundary"), ("lamet","is_dual_to","parton"),
+    # generates
+    ("hamiltonian","generates","time"), ("momentum","generates","space"),
+    ("symmetry","generates","anomaly"), ("renormalization","generates","beta"),
+    ("dissipator","generates","dephasing"),
+    # measures
+    ("entropy","measures","dimension"), ("chern number","measures","topological"),
+    ("trace","measures","density matrix"), ("variance","measures","dispersion"),
+    ("rayleigh number","measures","instability"),
+    # contradictions
+    ("boson","contradicts","fermion"), ("commutator","contradicts","anticommutator"),
+    ("continuum","incompatible_with","lattice"), ("classical","incompatible_with","quantum"),
+    ("majorana","incompatible_with","dirac"), ("unitary","contradicts","antiunitary"),
+    ("real","incompatible_with","imaginary"), ("local","incompatible_with","nonlocal"),
+]
+
+def build_default_crg():
+    g = ConceptRelationGraph()
+    for s, l, d in _RAW_EDGES: g.add_edge(s, l, d)
+    return g
+
+# ── 6. VOCABULARY ──────────────────────────────────────────────────────
+@dataclass
+class WordEntry:
+    word: str; vector: List[int]; role: str; ubp_id: str; nrci: float = 0.5
+    hamming_to_system: int = 0; golay_codeword: List[int] = field(default_factory=list)
+    golay_distance: int = 0; fold3: List[int] = field(default_factory=list)
+    mog_category: str = "I_Topology"; macro_nrci: float = 0.0
+
+def _get_mog_category(vector):
+    """v3.7.7: proper quadrant-based MOG category derivation."""
+    sextets = [vector[i:i+6] for i in range(0, 24, 6)]
+    weights = [sum(s) for s in sextets]
+    qi = weights.index(max(weights))
+    s = sextets[qi]
+    pw = [(s[2*i]+s[2*i+1], i) for i in range(3)]; pw.sort(reverse=True)
+    ci = qi * 6 + pw[0][1] * 2 + (1 if sum(vector) % 2 else 0)
+    return MOG_CATEGORIES[min(ci, len(MOG_CATEGORIES)-1)]
+
+def _query_type(query: str) -> str:
+    q = query.lower()
+    if "what is" in q or "define" in q or "meaning" in q: return "definition"
+    if "explain" in q or "describe" in q or "how does" in q: return "explanation"
+    if "relationship" in q or "connection" in q or "between" in q: return "relation"
+    if "nrci" in q or "stability" in q or "tax" in q or "coherence" in q: return "metric"
+    if "happens" in q or "effect" in q or "when" in q: return "causation"
+    return "general"
+
+# ── 7. ALIAS MAP (v3.7.7: restored) ───────────────────────────────────
+_CONCEPT_ALIASES = {
+    "monster":"LAW_MONSTROUS_MOONSHINE_001", "monstrous":"LAW_MONSTROUS_MOONSHINE_001",
+    "moonshine":"LAW_MONSTROUS_MOONSHINE_001", "golay":"LAW_GOLAY_UNIQUENESS_001",
+    "leech":"LAW_LEECH_TENSION_001", "lattice":"LAW_LEECH_TENSION_001",
+    "quark":"PARTICLE_QUARK_UP_001", "quarks":"PARTICLE_QUARK_UP_001",
+    "hadron":"LAW_BARYON_001", "baryon":"LAW_BARYON_001",
+    "hydrogen":"ELEM_H_001", "helium":"ELEM_He_002", "lithium":"ELEM_Li_003",
+    "carbon":"ELEM_C_006", "nitrogen":"ELEM_N_007", "oxygen":"ELEM_O_008",
+    "proton":"PARTICLE_PROTON_001", "electron":"PARTICLE_ELECTRON_001",
+    "photon":"PARTICLE_PHOTON_001", "neutron":"PARTICLE_NEUTRON_001",
+    "nrci":"LAW_GEOMETRIC_NRCI", "coherence":"LAW_GEOMETRIC_NRCI",
+    "symmetry":"LAW_BARYON_001", "holographic":"LAW_ATOM_HOLOGRAPHIC",
+    "anomaly":"LAW_ANOMALY_001", "weyl":"LAW_ANOMALY_001",
+    "substrate":"LAW_GOLAY_UNIQUENESS_001", "stability":"LAW_BARYON_PROTON_001",
+    "mass":"LAW_LEECH_TENSION_001", "water":"MOLECULE_H2O_001",
+}
+
+_system_kb_cache = {}
+_alias_map_cache = {}
+
+def _load_system_kb(path=None):
+    global _system_kb_cache
+    if _system_kb_cache: return _system_kb_cache
+    p = path or str(KB_SYSTEM_PATH)
+    try:
+        with open(p) as f: kb = json.load(f)
+        entries = kb["entries"]; fields = kb["_fields"]
+        for h, v in entries.items():
+            if not isinstance(v, list) or len(v) < 6: continue
+            uid = v[0]; lexicon = str(v[1]); vector = v[3] if len(v) > 3 else []
+            nrci = float(v[5]) if len(v) > 5 else 0.0
+            m = re.search(r'\[([^\]]{3,})\].*?\[([^\]]{10,})\]', lexicon)
+            name = m.group(1).strip() if m else uid
+            desc = m.group(2).strip() if m else ""
+            _system_kb_cache[uid] = {"ubp_id":uid,"name":name,"desc":desc,"vector":vector,"nrci":nrci}
+    except Exception: pass
+    return _system_kb_cache
+
+def _build_alias_map():
+    global _alias_map_cache
+    if _alias_map_cache: return _alias_map_cache
+    kb = _load_system_kb()
+    for uid, entry in kb.items():
+        for text in [entry.get("name",""), entry.get("desc","")[:60]]:
+            words = re.sub(r"[^a-z0-9 ]", "", text.lower()).split()
+            for w in words:
+                if len(w) >= 4 and w not in {"with","that","this","from","have","their","when","which","than","also"}:
+                    if w not in _alias_map_cache: _alias_map_cache[w] = uid
+    _alias_map_cache.update(_CONCEPT_ALIASES)
+    return _alias_map_cache
+
+# ── 8. KB LOADING ──────────────────────────────────────────────────────
+def _load_kb_safe(path):
+    if not path.exists(): return {}
+    with open(path, 'r') as f: data = json.load(f)
+    result = {}
+    fields = data.get("_fields", [])
+    f_idx = {name: i for i, name in enumerate(fields)}
+    for entry_list in data.get("entries", {}).values():
+        try:
+            uid = entry_list[f_idx["ubp_id"]]
+            result[uid] = {
+                "ubp_id": uid, "lexicon": entry_list[f_idx["lexicon"]],
+                "vector": entry_list[f_idx["vector"]] if "vector" in f_idx else [],
+                "nrci_val": entry_list[f_idx["nrci_val"]] if "nrci_val" in f_idx else 0.5
+            }
+        except (IndexError, KeyError): continue
+    return result
+
+# ── 9. PRIORITY VOCABULARY (v3.7.7: 90+ essential concepts) ───────────
+_PRIORITY_VOCAB = [
+    # Numbers
+    ("zero","NOUN","M_Count"),("one","NOUN","M_Count"),("two","NOUN","M_Count"),
+    ("three","NOUN","M_Count"),("four","NOUN","M_Count"),("five","NOUN","M_Count"),
+    ("six","NOUN","M_Count"),("seven","NOUN","M_Count"),("eight","NOUN","M_Count"),
+    ("nine","NOUN","M_Count"),("ten","NOUN","M_Count"),
+    # Boolean
+    ("true","NOUN","P_Coherence"),("false","NOUN","P_Coherence"),
+    # Operators
+    ("equals","OPERATOR","P_Coherence"),("plus","OPERATOR","A_Energy"),
+    ("minus","OPERATOR","A_Energy"),("times","OPERATOR","A_Force"),
+    # Substrate
+    ("golay","NOUN","I_Symmetry"),("leech","NOUN","I_Dimension"),
+    ("lattice","NOUN","I_Dimension"),("nrci","NOUN","P_Coherence"),
+    ("symmetry","NOUN","I_Symmetry"),("topology","NOUN","I_Topology"),
+    ("dimension","NOUN","I_Dimension"),("identity","NOUN","I_Symmetry"),
+    ("codeword","NOUN","I_Symmetry"),("weight","NOUN","M_Count"),
+    ("prime","NOUN","I_Topology"),
+    # Physics
+    ("hamiltonian","NOUN","A_Energy"),("lagrangian","NOUN","A_Energy"),
+    ("energy","NOUN","A_Energy"),("force","NOUN","A_Force"),
+    ("velocity","NOUN","A_Velocity"),("momentum","NOUN","A_Velocity"),
+    ("time","NOUN","M_Time"),("space","NOUN","M_Space"),
+    ("mass","NOUN","M_Mass"),("charge","NOUN","M_Charge"),
+    ("electron","NOUN","M_Mass"),("proton","NOUN","M_Charge"),
+    ("photon","NOUN","A_Energy"),("neutron","NOUN","M_Mass"),
+    ("boson","NOUN","I_Symmetry"),("fermion","NOUN","I_Symmetry"),
+    ("particle","NOUN","M_Mass"),("coupling","NOUN","I_Connectivity"),
+    ("entropy","NOUN","P_Tax"),("quantum","ADJECTIVE","I_Topology"),
+    ("operator","NOUN","P_Phase"),("metric","NOUN","I_Dimension"),
+    ("curvature","NOUN","I_Dimension"),("anomaly","NOUN","I_Topology"),
+    ("dispersion","NOUN","A_Flux"),("resonance","NOUN","A_Resonance"),
+    ("spin","NOUN","A_Spin"),("number","NOUN","M_Count"),
+    ("density","NOUN","I_Density"),("matrix","NOUN","I_Connectivity"),
+    ("ground","NOUN","P_Phase"),("state","NOUN","P_Phase"),
+    ("coherent","ADJECTIVE","P_Coherence"),("squeezed","ADJECTIVE","A_Force"),
+    ("projector","NOUN","P_Phase"),("trace","NOUN","I_Connectivity"),
+    ("variance","NOUN","P_Probability"),("expectation","NOUN","P_Probability"),
+    ("propagator","NOUN","A_Flux"),("partition","NOUN","P_Phase"),
+    ("beta","NOUN","P_Ratio"),("renormalization","NOUN","P_Limit"),
+    ("regularization","NOUN","P_Limit"),("regulator","NOUN","P_Limit"),
+    ("scale","NOUN","P_Ratio"),("temperature","NOUN","M_Thermal"),
+    ("thermal","ADJECTIVE","M_Thermal"),("convection","NOUN","A_Flux"),
+    ("instability","NOUN","P_Tax"),("hubbard","NOUN","I_Connectivity"),
+    ("tunneling","NOUN","A_Flux"),("interaction","NOUN","I_Connectivity"),
+    ("boundary","NOUN","I_Topology"),("brane","NOUN","I_Dimension"),
+    ("ads","NOUN","I_Dimension"),("holographic","ADJECTIVE","I_Dimension"),
+    ("conformal","ADJECTIVE","I_Topology"),("majorana","NOUN","I_Symmetry"),
+    ("topological","ADJECTIVE","I_Topology"),("weyl","NOUN","I_Topology"),
+    ("chern","NOUN","M_Count"),("gluon","NOUN","I_Symmetry"),
+    ("quark","NOUN","M_Mass"),("hadron","NOUN","M_Mass"),
+    # Chemistry
+    ("water","NOUN","M_Mass"),("hydrogen","NOUN","M_Mass"),
+    ("oxygen","NOUN","M_Charge"),("combine","VERB","I_Connectivity"),
+    ("become","VERB","P_Phase"),("form","VERB","I_Connectivity"),
+    # Verbs
+    ("is","VERB","P_Coherence"),("has","VERB","I_Connectivity"),
+    ("contains","VERB","I_Connectivity"),("requires","VERB","A_Force"),
+    ("generates","VERB","A_Energy"),("measures","VERB","P_Ratio"),
+    ("commutes","VERB","I_Symmetry"),("scales","VERB","P_Ratio"),
+    ("depends","VERB","I_Connectivity"),("links","VERB","I_Connectivity"),
+    ("stabilizes","VERB","P_Coherence"),("produces","VERB","A_Energy"),
+    ("encodes","VERB","I_Symmetry"),("defines","VERB","P_Coherence"),
+    ("transforms","VERB","A_Force"),("predicts","VERB","P_Probability"),
+    # Properties
+    ("stable","ADJECTIVE","P_Coherence"),("pure","ADJECTIVE","I_Symmetry"),
+    ("valid","ADJECTIVE","P_Coherence"),("unstable","ADJECTIVE","P_Tax"),
+    ("strong","ADJECTIVE","A_Force"),("weak","ADJECTIVE","A_Force"),
+    ("massive","ADJECTIVE","M_Mass"),("massless","ADJECTIVE","A_Energy"),
+    ("critical","ADJECTIVE","P_Limit"),
+]
+
+def _derive_vector(word, mog_cat):
+    """Derive a deterministic 24-bit vector from word hash + MOG category."""
+    h = hashlib.sha256(word.lower().encode()).digest()
+    bits = [(byte >> k) & 1 for byte in h for k in range(7, -1, -1)][:24]
+    cat_idx = MOG_CATEGORIES.index(mog_cat) if mog_cat in MOG_CATEGORIES else 6
+    cat_sig = [0] * 24
+    cat_sig[cat_idx % 24] = 1
+    return [bits[i] ^ cat_sig[i] for i in range(24)]
+
+def _inject_priority_vocab(words):
+    """Add priority concepts with deterministic vectors."""
+    for word, role, mog_cat in _PRIORITY_VOCAB:
+        if word not in words:
+            vec = _derive_vector(word, mog_cat)
+            nrci = float(LEECH_ENGINE.calculate_nrci(vec))
+            words[word] = WordEntry(
+                word=word, vector=vec, role=role, ubp_id=f"PV_{word}",
+                nrci=nrci, golay_codeword=vec, fold3=BLA.fold24_to3(vec),
+                mog_category=mog_cat
+            )
+
+# ── 10. VOCABULARY BUILDER ─────────────────────────────────────────────
+def _build_vocabulary():
+    lang_kb = _load_kb_safe(KB_LANG_PATH)
+    system_kb = _load_kb_safe(KB_SYSTEM_PATH)
+    combined_kb = {}
+    if lang_kb: combined_kb.update(lang_kb)
+    if system_kb: combined_kb.update(system_kb)
+    words = {}
+
+    # Contradiction fallbacks (1-bit-difference pairs for zone routing)
+    CONTRADICTION_FALLBACKS = {
+        "boson":[0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1],
+        "fermion":[0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,0],
+        "commutator":[0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1],
+        "anticommutator":[0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,0],
+        "continuum":[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],
+        "lattice":[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,0],
+        "classical":[1,1,1,0,0,0,1,1,1,0,0,0,1,1,1,0,0,0,1,1,1,0,0,0],
+        "quantum":[1,1,1,0,0,0,1,1,1,0,0,0,1,1,1,0,0,0,1,1,1,0,0,1],
+        "majorana":[1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1],
+        "dirac":[1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,0],
+        "unitary":[1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0],
+        "antiunitary":[1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,1],
+        "real":[1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],
+        "imaginary":[1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],
+        "local":[0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0],
+        "nonlocal":[0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1],
+    }
+
+    # Extract from KB
+    for uid, entry in combined_kb.items():
+        vec = entry.get('vector')
+        if not vec or len(vec) != 24: continue
+        lexicon = entry.get('lexicon', '')
+        m = re.search(r'\[(?:Word|Property|Operator|Element|Law|Molecule|Particle):?\s*([^\]]+)\]', lexicon)
+        if m:
+            word = m.group(1).lower().strip()
+            if "(" in word: word = word.split('(')[0].strip()
+            words[word] = WordEntry(word=word, vector=vec, role="NOUN", ubp_id=uid, nrci=entry.get('nrci_val', 0.5))
+
+    # Inject priority vocab (adds energy, water, time, etc.)
+    _inject_priority_vocab(words)
+
+    # Overwrite contradiction words with 1-bit-diff vectors
+    for cw, vec in CONTRADICTION_FALLBACKS.items():
+        words[cw] = WordEntry(word=cw, vector=list(vec), role="NOUN", ubp_id=f"NUM_FALLBACK_{cw.upper()}", nrci=0.5)
+
+    return words
+
+# ── 11. ISOLATION TEST ─────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("=== Testing Module 01: Substrate (v3.7.7) ===")
+    try:
+        vocab = _build_vocabulary()
+        print(f"✅ Success: Grounded {len(vocab)} words.")
+        # Check key words
+        for w in ["hamiltonian","time","energy","water","boson","fermion","symmetry"]:
+            print(f"  {w}: {'✓' if w in vocab else '✗ MISSING'}")
+        crg = build_default_crg()
+        print(f"  CRG edges: {len(crg.edges)}")
+        am = _build_alias_map()
+        print(f"  Aliases: {len(am)}")
+    except Exception as e:
+        print(f"❌ Failed: {e}")
+        import traceback; traceback.print_exc()

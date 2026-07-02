@@ -1,347 +1,136 @@
-
-import { PyodideInterface, ExecutionResult, Scene3DData } from '../types';
-
-const WORKSPACE = '/home/pyodide';
+// @ts-ignore
+import PyodideWorker from './pyodideWorker?worker';
+import { ExecutionResult } from '../types';
 
 class PyodideService {
-  private pyodide: PyodideInterface | null = null;
-  private outputBuffer: string[] = [];
+  private worker: Worker | null = null;
+  private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void }>();
+  private initialized = false;
+  private stdoutListeners = new Set<(msg: string) => void>();
+  private stderrListeners = new Set<(msg: string) => void>();
+  private sceneListeners = new Set<(data: any) => void>();
 
   async initialize(): Promise<void> {
-    if (this.pyodide) return;
+    if (this.initialized) return;
 
-    if (!(window as any).loadPyodide) {
-      throw new Error("Pyodide script not loaded in index.html");
-    }
+    // Create the Web Worker using Vite's native classic worker loader
+    this.worker = new (PyodideWorker as any)();
 
-    this.pyodide = await (window as any).loadPyodide();
-    await this.pyodide.loadPackage(["numpy", "pandas", "scipy", "matplotlib"]);
-    
-    // Ensure Workspace Structure
-    try { this.pyodide.FS.mkdir(WORKSPACE); } catch(e) { /* ignore if exists */ }
-    try { this.pyodide.FS.mkdir(`${WORKSPACE}/output`); } catch(e) { /* ignore */ }
+    this.worker.onmessage = (e: MessageEvent) => {
+      const { id, status, result, error, type, data } = e.data;
 
-    // Configure Python Environment (sys.path & cwd)
-    await this.pyodide.runPythonAsync(`
-      import sys
-      import os
-      workspace = "${WORKSPACE}"
-      if not os.path.exists(workspace):
-          os.makedirs(workspace)
-      os.chdir(workspace)
-      if workspace not in sys.path:
-          sys.path.insert(0, workspace)
-    `);
-    
-    // Create Standalone Visualization Module
-    this.pyodide.FS.writeFile(`${WORKSPACE}/ubp_viz.py`, `
-"""
-UBP Visualization Module (Standalone)
-Provides interface to the React Three.js Viewer.
-"""
-import json
-import os
+      // Handle unprompted streams (stdout logs, 3D scene updates, etc.)
+      if (type) {
+        if (type === 'stdout_stream') {
+          this.stdoutListeners.forEach(listener => listener(data));
+        } else if (type === 'stderr_stream') {
+          this.stderrListeners.forEach(listener => listener(data));
+        } else if (type === 'scene_3d') {
+          let parsedData = data;
+          if (typeof data === 'string') {
+            try { parsedData = JSON.parse(data); } catch (err) {}
+          }
+          this.sceneListeners.forEach(listener => listener(parsedData));
+          
+          // Trigger the global window callback for backward compatibility
+          if (typeof window !== 'undefined' && (window as any).updateScene3D) {
+            try {
+              (window as any).updateScene3D(typeof data === 'string' ? data : JSON.stringify(data));
+            } catch (err) {}
+          }
+        }
+        return;
+      }
 
-def save_scene_3d(data):
-    """
-    Saves 3D scene data to scene_3d.json for the frontend to render.
-    Also sends live updates directly to the React frontend.
-    """
-    try:
-        with open("scene_3d.json", "w") as f:
-            json.dump(data, f)
-            
-        # Send live update to React frontend
-        import js
-        if hasattr(js.window, 'updateScene3D'):
-            js.window.updateScene3D(json.dumps(data))
-            
-        print("[UBP VIZ] 3D Scene data exported to visual engine.")
-    except Exception as e:
-        print(f"[UBP VIZ ERROR] Failed to save scene: {e}")
-`);
+      // Handle standard request/response promise resolutions
+      const pending = this.pendingRequests.get(id);
+      if (pending) {
+        this.pendingRequests.delete(id);
+        if (status === 'success') {
+          pending.resolve(result);
+        } else {
+          pending.reject(new Error(error || 'Unknown error in Pyodide Web Worker'));
+        }
+      }
+    };
 
-    // Create Mock Modules for FastAPI, Uvicorn, and Websockets to allow server scripts to run in browser
-    this.pyodide.FS.writeFile(`${WORKSPACE}/fastapi.py`, `
-class WebSocket:
-    async def accept(self): pass
-    async def send_text(self, data):
-        import js
-        if hasattr(js.window, 'updateScene3D'):
-            js.window.updateScene3D(data)
-    async def receive_text(self):
-        import asyncio
-        await asyncio.sleep(100000)
-        return "{}"
+    // Trigger initialization on the worker thread
+    await this.sendRequest('init', {});
+    this.initialized = true;
+    console.log("Pyodide Web Worker Service initialized successfully.");
+  }
 
-class FastAPI:
-    def __init__(self, *args, **kwargs): pass
-    def get(self, *args, **kwargs): return lambda f: f
-    def post(self, *args, **kwargs): return lambda f: f
-    def websocket(self, *args, **kwargs): return lambda f: f
-`);
-
-    this.pyodide.FS.writeFile(`${WORKSPACE}/ubp_browser_engine.py`, `
-"""
-UBP Browser Engine (V3)
-This script adapts your UBP Physics Engine to run directly inside the browser's 
-animation loop, bypassing the need for FastAPI or WebSockets.
-
-Instructions:
-1. Ensure your engine files (ubp_space_v3.py, etc.) are uploaded to this workspace.
-2. Run this script instead of ubp_server_v3.py.
-3. Switch to the VISUAL tab to see the live simulation!
-"""
-import asyncio
-import json
-import js
-
-# Try to import the user's space module, fallback to a dummy simulation if not found
-try:
-    from ubp_space_v3 import Space
-    space = Space()
-    # Add some default entities if the space is empty
-    # space.add_entity(...) 
-    HAS_ENGINE = True
-except ImportError:
-    print("[UBP BROWSER ENGINE] ubp_space_v3.py not found. Running dummy simulation.")
-    HAS_ENGINE = False
-
-async def game_loop():
-    if globals().get('_ubp_loop_running'):
-        print("[UBP BROWSER ENGINE] Loop already running. Stopping previous loop.")
-        globals()['_ubp_loop_running'] = False
-        await asyncio.sleep(0.1) # Wait for previous loop to exit
-        
-    globals()['_ubp_loop_running'] = True
-    print("[UBP BROWSER ENGINE] Starting live simulation loop at 30 TPS...")
-    tick = 0
-    while globals().get('_ubp_loop_running'):
-        if HAS_ENGINE:
-            space.tick()
-            # Assuming space.to_dict() returns the Three.js compatible scene data
-            scene_data = space.to_dict()
-        else:
-            # Dummy simulation for demonstration
-            import math
-            scene_data = {
-                "spheres": [
-                    {"id": "1", "x": math.cos(tick*0.1)*5, "y": 0, "z": math.sin(tick*0.1)*5, "r": 1, "color": "#E31E24", "label": "Dummy Entity"}
-                ],
-                "points": [],
-                "lines": []
-            }
-            
-        # Send live update to React frontend
-        if hasattr(js.window, 'updateScene3D'):
-            js.window.updateScene3D(json.dumps(scene_data))
-            
-        tick += 1
-        # Yield to the browser's event loop (approx 30 FPS)
-        await asyncio.sleep(1/30)
-    print("[UBP BROWSER ENGINE] Loop stopped.")
-
-# Start the loop in the background
-asyncio.ensure_future(game_loop())
-print("[UBP BROWSER ENGINE] Loop scheduled. Switch to the VISUAL tab!")
-`);
-
-    this.pyodide.FS.writeFile(`${WORKSPACE}/uvicorn.py`, `
-import asyncio
-def run(app, *args, **kwargs):
-    print("[UBP BROWSER ENGINE] Intercepted uvicorn.run(). Running in browser mode instead.")
-    # We don't block here, we let the browser's event loop handle async tasks
-    pass
-`);
-
-    this.pyodide.FS.writeFile(`${WORKSPACE}/websockets.py`, `
-class WebSocketServerProtocol:
-    async def send(self, data):
-        import js
-        if hasattr(js.window, 'updateScene3D'):
-            js.window.updateScene3D(data)
-    async def recv(self):
-        import asyncio
-        await asyncio.sleep(100000) # Dummy block
-        return "{}"
-
-async def serve(*args, **kwargs):
-    print("[UBP BROWSER ENGINE] Intercepted websockets.serve(). Running in browser mode instead.")
-    import asyncio
-    class DummyServer:
-        async def wait_closed(self):
-            await asyncio.sleep(100000)
-    return DummyServer()
-`);
-
-    console.log(`Pyodide initialized. Workspace: ${WORKSPACE}`);
+  private sendRequest(action: string, payload: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error("Worker not initialized"));
+        return;
+      }
+      const id = Math.random().toString(36).substring(2, 9);
+      this.pendingRequests.set(id, { resolve, reject });
+      this.worker.postMessage({ id, action, payload });
+    });
   }
 
   reset(): void {
-    this.pyodide = null;
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.initialized = false;
+    this.pendingRequests.clear();
   }
 
   get isReady(): boolean {
-    return this.pyodide !== null;
-  }
-
-  // Helper to ensure we always point to the workspace
-  private resolvePath(filename: string): string {
-      if (filename.startsWith('/')) return filename;
-      return `${WORKSPACE}/${filename}`;
+    return this.initialized;
   }
 
   async writeFile(filename: string, content: string): Promise<void> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    this.pyodide.FS.writeFile(this.resolvePath(filename), content);
-  }
-
-  async renameFile(oldName: string, newName: string): Promise<void> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    const oldPath = this.resolvePath(oldName);
-    const newPath = this.resolvePath(newName);
-    
-    // Check if source exists
-    const analysis = this.pyodide.FS.analyzePath(oldPath);
-    if (!analysis.exists) {
-        throw new Error(`File not found: ${oldName}`);
-    }
-    
-    this.pyodide.FS.rename(oldPath, newPath);
-  }
-
-  async deleteFile(filename: string): Promise<void> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    const path = this.resolvePath(filename);
-    try {
-        const analyze = this.pyodide.FS.analyzePath(path);
-        if (analyze.exists) {
-            const stat = this.pyodide.FS.stat(path);
-            if (this.pyodide.FS.isDir(stat.mode)) {
-                this.pyodide.FS.rmdir(path);
-            } else {
-                this.pyodide.FS.unlink(path);
-            }
-            console.debug(`[FS] Successfully Deleted: ${path}`);
-        } else {
-            console.warn(`[FS] Path for deletion not found: ${path}`);
-        }
-    } catch (e) {
-        console.error(`[FS ERROR] failure deleting ${path}`, e);
-        throw e;
-    }
+    await this.sendRequest('writeFile', { filename, content });
   }
 
   async writeBinaryFile(filename: string, data: Uint8Array): Promise<void> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    this.pyodide.FS.writeFile(this.resolvePath(filename), data);
+    await this.sendRequest('writeBinaryFile', { filename, data });
   }
 
   async readFile(filename: string): Promise<string> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    const path = this.resolvePath(filename);
-    if (this.pyodide.FS.analyzePath(path).exists) {
-        return this.pyodide.FS.readFile(path, { encoding: 'utf8' });
-    }
-    return "";
+    return await this.sendRequest('readFile', { filename });
   }
 
   async readBinaryFile(filename: string): Promise<Uint8Array | null> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
-    const path = this.resolvePath(filename);
-    if (this.pyodide.FS.analyzePath(path).exists) {
-        return this.pyodide.FS.readFile(path);
-    }
-    return null;
+    return await this.sendRequest('readBinaryFile', { filename });
+  }
+
+  async renameFile(oldName: string, newName: string): Promise<void> {
+    await this.sendRequest('renameFile', { oldName, newName });
+  }
+
+  async deleteFile(filename: string): Promise<void> {
+    await this.sendRequest('deleteFile', { filename });
   }
 
   async listFiles(): Promise<string[]> {
-    if (!this.pyodide) return [];
-    
-    // List Workspace Files
-    let rootFiles: string[] = [];
-    try {
-        rootFiles = this.pyodide.FS.readdir(WORKSPACE);
-    } catch(e) { return []; }
-
-    const filteredRoot = rootFiles.filter((f: string) => 
-        f !== '.' && f !== '..' && f !== 'output' && f !== 'tmp' && f !== 'ubp_viz.py' && f !== 'fastapi.py' && f !== 'uvicorn.py' && f !== 'websockets.py'
-    );
-    
-    // List Output Files
-    let outputFiles: string[] = [];
-    try {
-        const out = this.pyodide.FS.readdir(`${WORKSPACE}/output`);
-        outputFiles = out
-            .filter((f: string) => f !== '.' && f !== '..')
-            .map((f: string) => `output/${f}`);
-    } catch (e) { }
-
-    return [...filteredRoot, ...outputFiles];
+    return await this.sendRequest('listFiles', {});
   }
 
   async runPython(code: string): Promise<ExecutionResult> {
-    if (!this.pyodide) throw new Error("Pyodide not initialized");
+    return await this.sendRequest('runPython', { code });
+  }
 
-    this.outputBuffer = [];
-    let image: string | undefined = undefined;
-    let scene3d: Scene3DData | undefined = undefined;
+  // Stream subscription APIs
+  onStdout(callback: (msg: string) => void) {
+    this.stdoutListeners.add(callback);
+    return () => this.stdoutListeners.delete(callback);
+  }
 
-    this.pyodide.setStdout({ batched: (msg: string) => this.outputBuffer.push(msg) });
-    this.pyodide.setStderr({ batched: (msg: string) => this.outputBuffer.push(`ERR: ${msg}`) });
+  onStderr(callback: (msg: string) => void) {
+    this.stderrListeners.add(callback);
+    return () => this.stderrListeners.delete(callback);
+  }
 
-    // Environment Safety Check: Force CWD and sys.path before every run
-    try {
-        await this.pyodide.runPythonAsync(`
-            import os
-            import sys
-            if os.getcwd() != "${WORKSPACE}":
-                os.chdir("${WORKSPACE}")
-            if "${WORKSPACE}" not in sys.path:
-                sys.path.insert(0, "${WORKSPACE}")
-        `);
-    } catch(e) { console.error("Env setup failed", e); }
-
-    // Cleanup previous run artifacts
-    const plotPath = `${WORKSPACE}/plot.png`;
-    const scenePath = `${WORKSPACE}/scene_3d.json`;
-    
-    try {
-        if (this.pyodide.FS.analyzePath(plotPath).exists) this.pyodide.FS.unlink(plotPath);
-        if (this.pyodide.FS.analyzePath(scenePath).exists) this.pyodide.FS.unlink(scenePath);
-    } catch (e) { /* ignore */ }
-
-    try {
-      // Execute User Code
-      await this.pyodide.runPythonAsync(code);
-      
-      // Check for Generated Image
-      if (this.pyodide.FS.analyzePath(plotPath).exists) {
-          const imageBuffer = this.pyodide.FS.readFile(plotPath);
-          const binary = String.fromCharCode.apply(null, Array.from(imageBuffer));
-          image = btoa(binary);
-      }
-
-      // Check for Generated 3D Scene
-      if (this.pyodide.FS.analyzePath(scenePath).exists) {
-          const sceneContent = this.pyodide.FS.readFile(scenePath, { encoding: 'utf8' });
-          try { scene3d = JSON.parse(sceneContent); } 
-          catch (e) { this.outputBuffer.push("ERR: Failed to parse scene_3d.json"); }
-      }
-
-      return {
-        stdout: this.outputBuffer.join('\n'),
-        stderr: '',
-        image,
-        scene3d
-      };
-    } catch (err: any) {
-      return {
-        stdout: this.outputBuffer.join('\n'),
-        stderr: err.toString(),
-        error: err.toString()
-      };
-    }
+  onScene3D(callback: (data: any) => void) {
+    this.sceneListeners.add(callback);
+    return () => this.sceneListeners.delete(callback);
   }
 }
 

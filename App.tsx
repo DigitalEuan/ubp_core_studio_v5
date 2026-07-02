@@ -17,6 +17,7 @@ import { ThreeViewer } from './components/ThreeViewer';
 import { MemoryStatus } from './components/MemoryStatus';
 import { FOMStatus } from './components/FOMStatus';
 import { AIProviderSelector } from './components/AIProviderSelector';
+import { GLMChatInterface } from './components/GLMChatInterface';
 import { marked } from 'marked';
 import { setIndexedDB, getIndexedDB, clearIndexedDB } from './lib/storage';
 
@@ -103,6 +104,49 @@ export const App: React.FC = () => {
   const loadStudyRef = useRef<HTMLInputElement>(null);
   const uploadFileRef = useRef<HTMLInputElement>(null);
 
+  // GLM (Geometric Language Machine) Workspace State
+  const [currentStudioMode, setCurrentStudioMode] = useState<'ubp' | 'glm'>('ubp');
+  const [glmFiles, setGLMFiles] = useState<FileTab[]>([]);
+  const [activeGLMTabId, setActiveGLMTabId] = useState<string>('');
+  const [glmMidColumnMode, setGLMMidColumnMode] = useState<'files' | 'editor'>('files');
+  const [glmChatMessages, setGLMChatMessages] = useState<ChatMessage[]>([
+    {
+      id: 'glm-welcome',
+      role: 'model',
+      content: 'Welcome to the GLM Workspace. I am ready to interact with the Geometric Language Machine (v3.7.3 Grown Build).',
+      timestamp: Date.now()
+    }
+  ]);
+  const [isGLMChatLoading, setIsGLMChatLoading] = useState(false);
+  const [glmConsoleLogs, setGLMConsoleLogs] = useState<ConsoleEntry[]>([]);
+  const [activeGLMOutputTab, setActiveGLMOutputTab] = useState<'console' | 'diagnostics'>('console');
+  const [isGLMExecuting, setIsGLMExecuting] = useState(false);
+  const [glmEffortTicks, setGLMEffortTicks] = useState<number>(3);
+  const [glmChatMode, setGLMChatMode] = useState<'standard' | 'effort'>('standard');
+  const [glmStatus, setGLMStatus] = useState<'offline' | 'booting' | 'online'>('offline');
+  const [glmLastDiag, setGLMLastDiag] = useState<string>('');
+  const [glmIdeaState, setGLMIdeaState] = useState<string>('');
+
+  // Inline GLM File Management State
+  const [isGLMCreatingFile, setIsGLMCreatingFile] = useState(false);
+  const [newGLMFileName, setNewGLMFileName] = useState('');
+  const [renamingGLMFile, setRenamingGLMFile] = useState<string | null>(null);
+  const [renameGLMValue, setRenameGLMValue] = useState('');
+  const [glmFileToDelete, setGLMFileToDelete] = useState<string | null>(null);
+
+  const glmNewFileInputRef = useRef<HTMLInputElement>(null);
+  const glmRenameInputRef = useRef<HTMLInputElement>(null);
+  const glmUploadFileRef = useRef<HTMLInputElement>(null);
+
+  const addGLMConsoleLog = (type: 'system' | 'stdout' | 'stderr' | 'error', content: string) => {
+      setGLMConsoleLogs(prev => [...prev, {
+          id: Math.random().toString(36).substr(2, 9),
+          type,
+          content,
+          timestamp: Date.now()
+      }]);
+  };
+
   const addConsoleLog = (type: 'system' | 'stdout' | 'stderr' | 'error', content: string) => {
       setConsoleLogs(prev => [...prev, {
           id: Math.random().toString(36).substr(2, 9),
@@ -110,6 +154,140 @@ export const App: React.FC = () => {
           content,
           timestamp: Date.now()
       }]);
+  };
+
+  const fetchGLMFolderRecursive = async (path: string): Promise<FileTab[]> => {
+    try {
+      const repoApiUrl = `https://api.github.com/repos/DigitalEuan/UBP_Repo/contents/${path}`;
+      const res = await fetch(repoApiUrl);
+      if (!res.ok) return [];
+      const items = await res.json();
+      
+      let folderFiles: FileTab[] = [];
+      const promises = items.map(async (item: any) => {
+        // Filter out old glm_ prefixed scripts
+        if (item.name.toLowerCase().startsWith('glm_')) {
+          return null;
+        }
+        if (item.type === 'file') {
+          if (item.name.endsWith('.py') || item.name.endsWith('.json') || item.name.endsWith('.md')) {
+            try {
+              const fileRes = await fetch(item.download_url);
+              if (fileRes.ok) {
+                const relativePath = item.path.substring('core_studio_v4.0/GLM/'.length);
+                let content = await fileRes.text();
+                
+                // Hot-patch the GitHub code to fix bugs
+                if (relativePath === 'GLM11_runtime.py') {
+                    // Fix idea_state format
+                    content = content.replace(
+                        'return {"turn": self._turn, "zones": len(self.manager.zones), "meta": self.meta_graph.stats()}',
+                        'return {"turn": self._turn, "manager": self.manager.state(), "meta": self.meta_graph.stats()}'
+                    );
+                    
+                    // Add reflexive_recall
+                    if (!content.includes('def _reflexive_recall')) {
+                        content = content.replace(
+                            '    def chat(self, query: str) -> str:',
+                            `    def _reflexive_recall(self, query: str):
+        from GLM00_config import KB_SYSTEM_PATH
+        from GLM01_substrate import _load_kb_safe
+        
+        system_kb = _load_kb_safe(KB_SYSTEM_PATH)
+        aliases = {}
+        for uid, entry in system_kb.items():
+            aliases[uid.lower()] = uid
+            aliases[entry.get("name", "").lower()] = uid
+            for m in entry.get("aliases", []):
+                 aliases[m.lower()] = uid
+                 
+        tokens = query.lower().replace("?","").replace(".","").split()
+        recalled = []
+        for t in tokens:
+            if t in aliases:
+                uid = aliases[t]
+                if uid in system_kb:
+                    recalled.append((t, uid, system_kb[uid].get('tags', [])))
+        return recalled
+
+    def chat(self, query: str) -> str:`
+                        );
+                    }
+                    
+                    // Pass recalled to compose_response
+                    if (!content.includes('recalled=recalled')) {
+                        content = content.replace(
+                            '        return compose_response(',
+                            '        recalled = self._reflexive_recall(query)\n        return compose_response('
+                        ).replace(
+                            '_enhanced_query_type(query), comp_res, sym_res, deliberation=delib_res',
+                            '_enhanced_query_type(query), comp_res, sym_res, deliberation=delib_res, recalled=recalled'
+                        );
+                    }
+                    
+                    if (!content.includes('def chat_with_effort')) {
+                        content = content.replace(
+                            '    def reset_idea(self):',
+                            `    def chat_with_effort(self, query: str, max_ticks: int = 5) -> str:
+        res = self.chat(query)
+        z = self.manager.active
+        if not z or getattr(z, 'crystallized', False): return res
+        for _ in range(max_ticks):
+            if getattr(z, 'crystallized', False): break
+            self.mature(1)
+        return res + f"\\n[Effort Applied] Thesis: {getattr(self.manager.active, 'thesis', '')}"
+
+    def reset_idea(self):`
+                        );
+                    }
+                } else if (relativePath === 'GLM07_idea_manager.py') {
+                    // Fix state() format for the tests
+                    content = content.replace(
+                        '"zones": [z.idea_state() if hasattr(z, \'idea_state\') else str(z) for z in self.zones]',
+                        '"zones": [{"crystallized": getattr(z, "crystallized", False), "thesis": getattr(z, "thesis", ""), "contradictions": getattr(z, "contradictions", []), "inferred_nouns": getattr(z, "inferred_nouns", [])} for z in self.zones]'
+                    );
+                    content = content.replace(
+                        'return {"num_zones": len(self.zones), "active_idx": self.active_idx}',
+                        'return {"num_zones": len(self.zones), "active_idx": self.active_idx, "zones": [{"crystallized": getattr(z, "crystallized", False), "thesis": getattr(z, "thesis", ""), "contradictions": getattr(z, "contradictions", []), "inferred_nouns": getattr(z, "inferred_nouns", [])} for z in self.zones]}'
+                    );
+                } else if (relativePath === 'GLM10_response_composer.py') {
+                    // Accept recalled argument
+                    content = content.replace(
+                        'deliberation: Optional[Dict] = None # <--- ADDED',
+                        'deliberation: Optional[Dict] = None, recalled: Optional[List] = None'
+                    );
+                    
+                    if (!content.includes('if recalled:')) {
+                        content = content.replace(
+                            '    return "  ".join(parts)',
+                            '    if recalled:\n        parts.append(f"[Recall] {recalled}")\n    return "  ".join(parts)'
+                        );
+                    }
+                }
+
+                return {
+                  name: relativePath,
+                  content: content,
+                  type: relativePath.endsWith('.py') ? 'script' : 'data'
+                } as FileTab;
+              }
+            } catch (e) {
+              console.warn(`Failed to fetch file ${item.path}`, e);
+            }
+          }
+        } else if (item.type === 'dir') {
+          const subFiles = await fetchGLMFolderRecursive(item.path);
+          folderFiles = [...folderFiles, ...subFiles];
+        }
+        return null;
+      });
+      
+      const resolved = (await Promise.all(promises)).filter((f): f is FileTab => f !== null);
+      return [...folderFiles, ...resolved];
+    } catch (err) {
+      console.error(`Error fetching GLM folder recursive from ${path}:`, err);
+      return [];
+    }
   };
 
   const refreshFileList = useCallback(async () => {
@@ -214,8 +392,36 @@ export const App: React.FC = () => {
     const initKernel = async () => {
         try {
             addConsoleLog('system', "Initializing Pyodide Runtime...");
+            
+            if (typeof window !== 'undefined') {
+                (window as any).addGLMConsoleLogFromPython = (type: string, msg: string) => {
+                    addGLMConsoleLog(type as any, msg);
+                };
+                (window as any).addConsoleLogFromPython = (type: string, msg: string) => {
+                    addConsoleLog(type as any, msg);
+                };
+            }
+
             await pyodideService.initialize();
             
+            // Setup global monkey-patch for os.chdir to redirect non-existent local paths to /home/pyodide
+            await pyodideService.runPython(`
+import os
+import sys
+
+original_chdir = os.chdir
+def patched_chdir(path):
+    try:
+        original_chdir(path)
+    except Exception:
+        original_chdir('/home/pyodide')
+os.chdir = patched_chdir
+
+os.environ['UBP_CORE_PATH'] = '/home/pyodide'
+if '/home/pyodide' not in sys.path:
+    sys.path.insert(0, '/home/pyodide')
+`);
+
             // Initial Sync of basic files
             await pyodideService.writeFile('ubp_system_kb.json', systemKb); 
             await pyodideService.writeFile('ubp_lang_kb_combined_v4.json', langKb);
@@ -268,16 +474,43 @@ export const App: React.FC = () => {
   // Sync All Workspace Files to Pyodide - Triggered by Readiness OR File Loading
   useEffect(() => {
     if (isPyodideReady && files.length > 0) {
-        const syncFiles = async () => {
-            try {
-                for (const f of files) {
-                   await pyodideService.writeFile(f.name, f.content);
-                }
-            } catch (e) { console.error("Auto-sync error", e); }
-        };
-        syncFiles();
+        const timeoutId = setTimeout(() => {
+            const syncFiles = async () => {
+                try {
+                    for (const f of files) {
+                       await pyodideService.writeFile(f.name, f.content);
+                    }
+                } catch (e) { console.error("Auto-sync error", e); }
+            };
+            syncFiles();
+        }, 1000);
+        return () => clearTimeout(timeoutId);
     }
-  }, [isPyodideReady, files.length]); // Updated dependency to catch late-arriving files
+  }, [isPyodideReady, files]);
+
+  // Sync All GLM Files to Pyodide
+  useEffect(() => {
+    if (isPyodideReady && glmFiles.length > 0) {
+        const timeoutId = setTimeout(() => {
+            const syncGLM = async () => {
+                try {
+                    for (const f of glmFiles) {
+                       await pyodideService.writeFile(f.name, f.content);
+                    }
+                } catch (e) { console.error("GLM Auto-sync error", e); }
+            };
+            syncGLM();
+        }, 1000);
+        return () => clearTimeout(timeoutId);
+    }
+  }, [isPyodideReady, glmFiles]);
+
+  // Prune any existing old glm files from state once loaded
+  useEffect(() => {
+    if (hasLoadedInitialData && glmFiles.some(f => f.name.toLowerCase().startsWith('glm_'))) {
+      setGLMFiles(prev => prev.filter(f => !f.name.toLowerCase().startsWith('glm_')));
+    }
+  }, [hasLoadedInitialData, glmFiles]);
 
   // Sync Knowledge Bases to Python File System whenever they change content
   useEffect(() => {
@@ -309,6 +542,7 @@ export const App: React.FC = () => {
         const sessionData = {
           files,
           systemKb,
+          bytes: undefined, // ensure no extra payload sizes
           langKb,
           studyKb,
           hashMemoryKb,
@@ -320,6 +554,19 @@ export const App: React.FC = () => {
           activeOutputTab,
           fomFrames,
           activeFrame,
+          // GLM State
+          currentStudioMode,
+          glmFiles,
+          activeGLMTabId,
+          glmMidColumnMode,
+          glmChatMessages,
+          glmConsoleLogs,
+          activeGLMOutputTab,
+          glmEffortTicks,
+          glmChatMode,
+          glmStatus,
+          glmLastDiag,
+          glmIdeaState,
           timestamp: Date.now()
         };
         await setIndexedDB('ubp_auto_save', sessionData);
@@ -330,7 +577,10 @@ export const App: React.FC = () => {
     
     const timeoutId = setTimeout(saveSession, 3000);
     return () => clearTimeout(timeoutId);
-  }, [files, systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, chatMessages, consoleLogs, activeTabId, midColumnMode, activeOutputTab, fomFrames, activeFrame, hasLoadedInitialData]);
+  }, [
+    files, systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, chatMessages, consoleLogs, activeTabId, midColumnMode, activeOutputTab, fomFrames, activeFrame, hasLoadedInitialData,
+    currentStudioMode, glmFiles, activeGLMTabId, glmMidColumnMode, glmChatMessages, glmConsoleLogs, activeGLMOutputTab, glmEffortTicks, glmChatMode, glmStatus, glmLastDiag, glmIdeaState
+  ]);
 
   // Load Initial Resources from GitHub
   useEffect(() => {
@@ -347,7 +597,8 @@ export const App: React.FC = () => {
         let hasAutoSave = false;
         if (saved) {
            const data = saved;
-           if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) { // 24 hours
+           const isKbValid = data.systemKb && data.systemKb !== "[]" && data.langKb && data.langKb !== "[]";
+          if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000 && isKbValid) { // 24 hours
               hasAutoSave = true;
               if (data.files && data.files.length > 0) setFiles(data.files);
               if (data.systemKb) setSystemKb(data.systemKb);
@@ -363,6 +614,22 @@ export const App: React.FC = () => {
               if (data.fomFrames && data.fomFrames.length > 0) {
                   setInitialFomIndex(JSON.stringify(data.fomFrames));
               }
+
+              if (data.glmFiles && data.glmFiles.length > 0) {
+                setGLMFiles(data.glmFiles.filter((f: any) => !f.name.toLowerCase().startsWith('glm_')));
+              }
+              if (data.currentStudioMode) setCurrentStudioMode(data.currentStudioMode);
+              if (data.activeGLMTabId) setActiveGLMTabId(data.activeGLMTabId);
+              if (data.glmMidColumnMode) setGLMMidColumnMode(data.glmMidColumnMode);
+              if (data.glmChatMessages && data.glmChatMessages.length > 0) setGLMChatMessages(data.glmChatMessages);
+              if (data.glmConsoleLogs && data.glmConsoleLogs.length > 0) setGLMConsoleLogs(data.glmConsoleLogs);
+              if (data.activeGLMOutputTab) setActiveGLMOutputTab(data.activeGLMOutputTab);
+              if (data.glmEffortTicks) setGLMEffortTicks(data.glmEffortTicks);
+              if (data.glmChatMode) setGLMChatMode(data.glmChatMode);
+              if (data.glmStatus) setGLMStatus(data.glmStatus);
+              if (data.glmLastDiag) setGLMLastDiag(data.glmLastDiag);
+              if (data.glmIdeaState) setGLMIdeaState(data.glmIdeaState);
+
               addConsoleLog('system', 'Restored previous session from auto-save.');
               setHasLoadedInitialData(true);
            }
@@ -490,6 +757,19 @@ export const App: React.FC = () => {
             return combined.filter(f => f.name.toLowerCase() !== 'scratch.py'); // FINAL FILTER
         });
 
+        // Fetch GLM Workspace files on fresh start
+        addConsoleLog('system', 'Fetching GLM Workspace files from GitHub...');
+        try {
+            const fetchedGLM = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+            if (fetchedGLM.length > 0) {
+                setGLMFiles(fetchedGLM);
+                setActiveGLMTabId(fetchedGLM[0].name);
+                addConsoleLog('system', `Successfully fetched ${fetchedGLM.length} GLM Workspace files.`);
+            }
+        } catch (e) {
+            console.error("Failed to fetch GLM files on startup:", e);
+        }
+
         setHasLoadedInitialData(true);
 
       } catch (e) { console.error("Resource load failed", e); }
@@ -520,6 +800,31 @@ export const App: React.FC = () => {
         loadFom();
     }
   }, [isPyodideReady, initialFomIndex]);
+
+  // Sync Knowledge Base files to Pyodide once ready or when updated
+  useEffect(() => {
+    if (isPyodideReady) {
+        const syncKBs = async () => {
+            try {
+                if (systemKb) {
+                    await pyodideService.writeFile('ubp_system_kb.json', systemKb);
+                }
+                if (langKb) {
+                    await pyodideService.writeFile('ubp_lang_kb_combined_v4.json', langKb);
+                }
+                if (beliefsKb) {
+                    await pyodideService.writeFile('ubp_beliefs_kb.json', beliefsKb);
+                }
+                if (hashMemoryKb) {
+                    await pyodideService.writeFile('hash_memory_kb.json', hashMemoryKb);
+                }
+            } catch (e) {
+                console.error("Failed to sync KB files to Pyodide", e);
+            }
+        };
+        syncKBs();
+    }
+  }, [isPyodideReady, systemKb, langKb, beliefsKb, hashMemoryKb]);
 
   const syncFOMSystem = async () => {
     try {
@@ -854,6 +1159,600 @@ except Exception as e:
       setFiles(prev => prev.map(f => f.name === name ? { ...f, content } : f));
   };
 
+  const updateGLMFileContent = (name: string, content: string) => {
+      setGLMFiles(prev => prev.map(f => f.name === name ? { ...f, content } : f));
+  };
+
+  const bootGLMRuntime = async () => {
+    if (!isPyodideReady) {
+      addGLMConsoleLog('error', "Cannot boot GLM: Pyodide Kernel is not ready.");
+      return;
+    }
+    setGLMStatus('booting');
+    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.7.3...");
+    
+    const bootCode = `
+import os
+import sys
+
+# Setup global monkey-patch for os.chdir to redirect non-existent local paths to /home/pyodide
+if not hasattr(os, '_patched_for_ubp'):
+    original_chdir = os.chdir
+    def patched_chdir(path):
+        try:
+            original_chdir(path)
+        except Exception:
+            original_chdir('/home/pyodide')
+    os.chdir = patched_chdir
+    os._patched_for_ubp = True
+
+os.environ['UBP_CORE_PATH'] = '/home/pyodide'
+if '/home/pyodide' not in sys.path:
+    sys.path.insert(0, '/home/pyodide')
+
+import js
+def log_to_js(msg):
+    try:
+        js.window.addGLMConsoleLogFromPython('system', f"⚙️ {msg}")
+    except Exception:
+        js.console.log("[GLM BOOT]", msg)
+
+# Clear module cache to ensure we load latest file content
+for k in list(sys.modules.keys()):
+    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+        sys.modules.pop(k, None)
+
+try:
+    log_to_js("Loading GLMRuntimeV37 from GLM11_runtime...")
+    from GLM11_runtime import GLMRuntimeV37
+    log_to_js("Instantiating GLMRuntimeV37...")
+    globals()['glm_rt'] = GLMRuntimeV37()
+    log_to_js("GLM Booted successfully!")
+    print("SUCCESS")
+except Exception as e:
+    import traceback
+    err_trace = traceback.format_exc()
+    log_to_js(f"GLM Boot failed: {err_trace}")
+    print(f"ERROR: {e}\\n{err_trace}")
+`;
+    try {
+      const res = await pyodideService.runPython(bootCode);
+      if (res.stdout.includes("SUCCESS")) {
+        setGLMStatus('online');
+        addGLMConsoleLog('system', "GLM v3.7.3 loaded successfully and is now ONLINE.");
+        await updateGLMStates();
+      } else {
+        setGLMStatus('offline');
+        addGLMConsoleLog('error', `GLM Boot failed: ${res.stdout || res.stderr || res.error}`);
+      }
+    } catch (e: any) {
+      setGLMStatus('offline');
+      addGLMConsoleLog('error', `GLM Boot exception: ${e.message}`);
+    }
+  };
+
+  const updateGLMStates = async () => {
+    if (!isPyodideReady) return;
+    try {
+      const diagCode = `
+import json
+try:
+    if 'glm_rt' in globals():
+        rt = globals()['glm_rt']
+        
+        # Check if methods exist and call them safely
+        diag_val = {}
+        if hasattr(rt, 'last_diag'):
+            diag_val = rt.last_diag()
+        elif hasattr(rt, 'get_diagnostics'):
+            diag_val = rt.get_diagnostics()
+            
+        idea_val = {}
+        if hasattr(rt, 'idea_state'):
+            idea_val = rt.idea_state()
+        elif hasattr(rt, 'get_idea_state'):
+            idea_val = rt.get_idea_state()
+
+        # Safely serialize using default=str fallback to prevent any type crashes
+        print("DIAG_START")
+        print(json.dumps(diag_val, indent=2, default=str))
+        print("DIAG_END")
+        
+        print("IDEA_START")
+        print(json.dumps(idea_val, indent=2, default=str))
+        print("IDEA_END")
+    else:
+        print("STATE_ERR: GLM runtime not found in globals.")
+except Exception as e:
+    print(f"STATE_ERR: {e}")
+`;
+      const res = await pyodideService.runPython(diagCode);
+      if (res.stdout) {
+        const diagMatch = res.stdout.match(/DIAG_START\s*([\s\S]*?)\s*DIAG_END/);
+        const ideaMatch = res.stdout.match(/IDEA_START\s*([\s\S]*?)\s*IDEA_END/);
+        
+        if (diagMatch && diagMatch[1]) setGLMLastDiag(diagMatch[1]);
+        if (ideaMatch && ideaMatch[1]) setGLMIdeaState(ideaMatch[1]);
+      }
+    } catch (e) {
+      console.error("Failed to update GLM states", e);
+    }
+  };
+
+  const handleSendGLMMessage = async (text: string) => {
+    if (isGLMChatLoading) return;
+    
+    const newUserMsg: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text,
+      timestamp: Date.now()
+    };
+    setGLMChatMessages(prev => [...prev, newUserMsg]);
+    setIsGLMChatLoading(true);
+    setGLMMidColumnMode('editor');
+    
+    try {
+      if (glmStatus !== 'online') {
+        addGLMConsoleLog('system', "GLM is offline. Triggering auto-boot...");
+        await bootGLMRuntime();
+      }
+      
+      await pyodideService.writeFile('glm_query.txt', text);
+      addGLMConsoleLog('system', `>>> Sending query to GLM: "${text.substring(0, 50)}..."`);
+      
+      const chatCode = `
+import os
+import sys
+
+# Setup global monkey-patch for os.chdir to redirect non-existent local paths to /home/pyodide
+if not hasattr(os, '_patched_for_ubp'):
+    original_chdir = os.chdir
+    def patched_chdir(path):
+        try:
+            original_chdir(path)
+        except Exception:
+            original_chdir('/home/pyodide')
+    os.chdir = patched_chdir
+    os._patched_for_ubp = True
+
+os.environ['UBP_CORE_PATH'] = '/home/pyodide'
+if '/home/pyodide' not in sys.path:
+    sys.path.insert(0, '/home/pyodide')
+
+try:
+    with open('glm_query.txt', 'r') as f:
+        query = f.read()
+    
+    if 'glm_rt' not in globals():
+        # Clear module cache to ensure we load latest file content
+        for k in list(sys.modules.keys()):
+            if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+                sys.modules.pop(k, None)
+        from GLM11_runtime import GLMRuntimeV37
+        globals()['glm_rt'] = GLMRuntimeV37()
+        
+    rt = globals()['glm_rt']
+    
+    mode = "${glmChatMode}"
+    ticks = ${glmEffortTicks}
+    
+    if mode == 'effort':
+        response = rt.chat_with_effort(query, max_ticks=ticks)
+    else:
+        response = rt.chat(query)
+        
+    print("RESPONSE_START")
+    print(response)
+    print("RESPONSE_END")
+except Exception as e:
+    import traceback
+    print(f"CHAT_ERR: {e}\\n{traceback.format_exc()}")
+`;
+      const res = await pyodideService.runPython(chatCode);
+      
+      if (res.stdout) {
+        const match = res.stdout.match(/RESPONSE_START\s*([\s\S]*?)\s*RESPONSE_END/);
+        if (match && match[1]) {
+          const responseText = match[1].trim();
+          
+          let thought: string | undefined = undefined;
+          const lines = responseText.split('\n');
+          const traceLines = lines.filter(l => l.startsWith('[deliberated') || l.startsWith('[method') || l.startsWith('[step') || l.includes('deliberated:'));
+          if (traceLines.length > 0) {
+            thought = traceLines.join('\n');
+          }
+          
+          const newModelMsg: ChatMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            content: responseText,
+            timestamp: Date.now(),
+            thought
+          };
+          setGLMChatMessages(prev => [...prev, newModelMsg]);
+          addGLMConsoleLog('stdout', responseText);
+        } else if (res.stdout.includes("CHAT_ERR")) {
+          throw new Error(res.stdout);
+        } else {
+          throw new Error("No response delimiter returned from GLM runtime.");
+        }
+      } else {
+        throw new Error(res.error || res.stderr || "Empty output from GLM run.");
+      }
+      
+      await updateGLMStates();
+      
+    } catch (e: any) {
+      addGLMConsoleLog('error', `GLM Chat failed: ${e.message}`);
+      setGLMChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: `GLM Execution Error:\n${e.message}`,
+        timestamp: Date.now(),
+        isError: true
+      }]);
+    } finally {
+      setIsGLMChatLoading(false);
+    }
+  };
+
+  const handleExportWorkspace = async () => {
+    try {
+      addGLMConsoleLog('system', "Bundling current development workspace backup...");
+      let syncedFiles = [];
+      if (isPyodideReady) {
+        const workerFiles = await pyodideService.listFiles();
+        for (const name of workerFiles) {
+          if (name.endsWith('.py') || name.endsWith('.json') || name.endsWith('.md')) {
+            try {
+              const content = await pyodideService.readFile(name);
+              syncedFiles.push({ name, content });
+            } catch (e) {}
+          }
+        }
+      }
+
+      const backup = {
+        version: "4.3.0",
+        timestamp: Date.now(),
+        files: files,
+        glmFiles: glmFiles,
+        pyodideFS: syncedFiles,
+        systemKb,
+        langKb,
+        studyKb,
+        hashMemoryKb,
+        beliefsKb,
+        fomFrames,
+        activeFrame,
+        glmChatMessages,
+        glmConsoleLogs
+      };
+
+      const jsonStr = JSON.stringify(backup, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ubp_workspace_dev_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      addGLMConsoleLog('system', "Workspace backup downloaded successfully!");
+    } catch (err: any) {
+      addGLMConsoleLog('error', `Failed to export workspace: ${err.message}`);
+    }
+  };
+
+  const handleImportWorkspace = async (file: File) => {
+    try {
+      addGLMConsoleLog('system', `Reading workspace backup: ${file.name}...`);
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      
+      if (!backup || typeof backup !== 'object') {
+        throw new Error("Invalid backup file format.");
+      }
+
+      if (backup.files) setFiles(backup.files);
+      if (backup.glmFiles) setGLMFiles(backup.glmFiles);
+      if (backup.systemKb) setSystemKb(backup.systemKb);
+      if (backup.langKb) setLangKb(backup.langKb);
+      if (backup.studyKb) setStudyKb(backup.studyKb);
+      if (backup.hashMemoryKb) setHashMemoryKb(backup.hashMemoryKb);
+      if (backup.beliefsKb) setBeliefsKb(backup.beliefsKb);
+      if (backup.fomFrames) setFomFrames(backup.fomFrames);
+      if (backup.activeFrame) setActiveFrame(backup.activeFrame);
+      if (backup.glmChatMessages) setGLMChatMessages(backup.glmChatMessages);
+      if (backup.glmConsoleLogs) setGLMConsoleLogs(backup.glmConsoleLogs);
+
+      if (isPyodideReady && backup.pyodideFS) {
+        for (const pyFile of backup.pyodideFS) {
+          try {
+            await pyodideService.writeFile(pyFile.name, pyFile.content);
+          } catch (e) {}
+        }
+      }
+
+      addGLMConsoleLog('system', "Workspace restored successfully and synchronized to sandbox environment!");
+    } catch (err: any) {
+      addGLMConsoleLog('error', `Import failed: ${err.message}`);
+      alert(`Import failed: ${err.message}`);
+    }
+  };
+
+  const runGLMSelfTests = async () => {
+    if (!isPyodideReady || isGLMExecuting) return;
+    setIsGLMExecuting(true);
+    setActiveGLMOutputTab('console');
+    addGLMConsoleLog('system', ">>> Running GLM 12 Self-Tests (A-L)...");
+    
+    const testCode = `
+import sys
+
+# Clear module cache to load latest content
+for k in list(sys.modules.keys()):
+    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+        sys.modules.pop(k, None)
+
+old_argv = sys.argv
+sys.argv = ['GLM12_cli_entry.py', '--test']
+
+try:
+    with open('GLM12_cli_entry.py', 'r') as f:
+        code = f.read().replace('__file__', '"GLM12_cli_entry.py"')
+    g = globals().copy()
+    g['__file__'] = 'GLM12_cli_entry.py'
+    from GLM11_runtime import GLMRuntimeV37
+    g['GLMRuntimeV37'] = GLMRuntimeV37
+    from pathlib import Path
+    g['Path'] = Path
+    g['__name__'] = '__main__'
+    exec(code, g)
+finally:
+    sys.argv = old_argv
+`;
+    try {
+      const res = await pyodideService.runPython(testCode);
+      if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
+      if (res.stderr) addGLMConsoleLog('stderr', res.stderr);
+      if (res.error) addGLMConsoleLog('error', res.error);
+    } catch (e: any) {
+      addGLMConsoleLog('error', `Self-tests failed: ${e.message}`);
+    } finally {
+      setIsGLMExecuting(false);
+    }
+  };
+
+  const runGLMBenchmarks = async () => {
+    if (!isPyodideReady || isGLMExecuting) return;
+    setIsGLMExecuting(true);
+    setActiveGLMOutputTab('console');
+    addGLMConsoleLog('system', ">>> Running 28 Gold-Set Benchmarks...");
+    
+    const benchmarkCode = `
+import sys
+
+# Clear module cache to load latest content
+for k in list(sys.modules.keys()):
+    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+        sys.modules.pop(k, None)
+
+old_argv = sys.argv
+sys.argv = ['run_benchmark.py', '--suite', 'all', '--tag', 'v373', '--engine', 'grown']
+
+try:
+    with open('run_benchmark.py', 'r') as f:
+        code = f.read().replace('__file__', '"run_benchmark.py"')
+    g = globals().copy()
+    g['__file__'] = 'run_benchmark.py'
+    g['__name__'] = '__main__'
+    exec(code, g)
+finally:
+    sys.argv = old_argv
+`;
+    try {
+      const res = await pyodideService.runPython(benchmarkCode);
+      if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
+      if (res.stderr) addGLMConsoleLog('stderr', res.stderr);
+      if (res.error) addGLMConsoleLog('error', res.error);
+    } catch (e: any) {
+      addGLMConsoleLog('error', `Benchmarks run failed: ${e.message}`);
+    } finally {
+      setIsGLMExecuting(false);
+    }
+  };
+
+  const handleRunGLMCode = async () => {
+    const activeFile = glmFiles.find(f => f.name === activeGLMTabId);
+    if (!activeFile || !isPyodideReady || isGLMExecuting) return;
+
+    setIsGLMExecuting(true);
+    setActiveGLMOutputTab('console');
+    addGLMConsoleLog('system', `>>> Running GLM Script: ${activeFile.name}...`);
+    
+    await pyodideService.writeFile(activeFile.name, activeFile.content);
+    
+    const runCode = `
+import sys
+
+# Clear module cache to load latest content
+for k in list(sys.modules.keys()):
+    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+        sys.modules.pop(k, None)
+
+old_argv = sys.argv
+if "${activeFile.name}" == "run_benchmark.py":
+    sys.argv = ['run_benchmark.py', '--suite', 'all', '--tag', 'v373', '--engine', 'grown']
+elif "${activeFile.name}" == "GLM12_cli_entry.py":
+    sys.argv = ['GLM12_cli_entry.py', '--test']
+else:
+    sys.argv = ["${activeFile.name}"]
+
+try:
+    with open("${activeFile.name}", 'r') as f:
+        code = f.read().replace('__file__', '"${activeFile.name}"')
+    g = globals().copy()
+    g['__file__'] = "${activeFile.name}"
+    if "${activeFile.name}" == "GLM12_cli_entry.py":
+        from GLM11_runtime import GLMRuntimeV37
+        g['GLMRuntimeV37'] = GLMRuntimeV37
+        from pathlib import Path
+        g['Path'] = Path
+    g['__name__'] = '__main__'
+    exec(code, g)
+finally:
+    sys.argv = old_argv
+`;
+
+    try {
+      const result = await pyodideService.runPython(runCode);
+      if (result.stdout) addGLMConsoleLog('stdout', result.stdout);
+      if (result.stderr) addGLMConsoleLog('stderr', result.stderr);
+      if (result.error) addGLMConsoleLog('error', result.error);
+    } catch (e: any) {
+      addGLMConsoleLog('error', `Execution exception: ${e.message}`);
+    } finally {
+      setIsGLMExecuting(false);
+    }
+  };
+
+  const startCreateGLMFile = () => {
+      setIsGLMCreatingFile(true);
+      setNewGLMFileName('');
+      setTimeout(() => glmNewFileInputRef.current?.focus(), 50);
+  };
+
+  const submitCreateGLMFile = async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      let name = newGLMFileName.trim();
+      if (!name) {
+          setIsGLMCreatingFile(false);
+          return;
+      }
+      if (!name.includes('.')) name += '.py';
+
+      if (glmFiles.some(f => f.name === name)) {
+          alert("File exists");
+          return;
+      }
+
+      const newFile: FileTab = { name, content: '# New GLM Script\n', type: 'script' };
+      setGLMFiles(prev => [...prev, newFile]);
+      setIsGLMCreatingFile(false);
+      setActiveGLMTabId(name);
+      setGLMMidColumnMode('editor');
+
+      if (isPyodideReady) {
+          await pyodideService.writeFile(name, newFile.content);
+          addGLMConsoleLog('system', `Created file: ${name}`);
+      }
+  };
+
+  const startRenameGLM = (name: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setRenamingGLMFile(name);
+      setRenameGLMValue(name);
+      setTimeout(() => glmRenameInputRef.current?.focus(), 50);
+  };
+
+  const submitRenameGLM = async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!renamingGLMFile) return;
+      const oldName = renamingGLMFile;
+      const newName = renameGLMValue.trim();
+      
+      if (!newName || newName === oldName) {
+          setRenamingGLMFile(null);
+          return;
+      }
+
+      setGLMFiles(prev => prev.map(f => f.name === oldName ? { ...f, name: newName } : f));
+      if (activeGLMTabId === oldName) setActiveGLMTabId(newName);
+      setRenamingGLMFile(null);
+
+      if (isPyodideReady) {
+          try {
+             const fileData = glmFiles.find(f => f.name === oldName);
+             await pyodideService.writeFile(newName, fileData?.content || "");
+             try { await pyodideService.deleteFile(oldName); } catch(e) {}
+             addGLMConsoleLog('system', `Renamed ${oldName} -> ${newName}`);
+          } catch (e: any) {
+             console.error(e);
+          }
+      }
+  };
+
+  const requestDeleteGLM = (name: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setGLMFileToDelete(name);
+  };
+
+  const confirmDeleteGLM = async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!glmFileToDelete) return;
+      
+      const name = glmFileToDelete;
+      setGLMFiles(prev => prev.filter(f => f.name !== name));
+      if (activeGLMTabId === name) setActiveGLMTabId('');
+      setGLMFileToDelete(null);
+
+      if (isPyodideReady) {
+          try {
+              await pyodideService.deleteFile(name);
+              addGLMConsoleLog('system', `Deleted ${name}`);
+          } catch (e) { console.error("FS Delete failed", e); }
+      }
+  };
+
+  const cancelDeleteGLM = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setGLMFileToDelete(null);
+  };
+
+  const handleUploadGLMFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          const content = event.target?.result as string;
+          if (content) {
+              const newFile: FileTab = { name: file.name, content: content, type: file.name.endsWith('.py') ? 'script' : 'data' };
+              setGLMFiles(prev => {
+                  if (prev.find(f => f.name === file.name)) return prev.map(f => f.name === file.name ? newFile : f);
+                  return [...prev, newFile];
+              });
+              if (isPyodideReady) {
+                  await pyodideService.writeFile(file.name, content);
+                  addGLMConsoleLog('system', `Uploaded ${file.name}`);
+              }
+          }
+      };
+      reader.readAsText(file);
+      if (glmUploadFileRef.current) glmUploadFileRef.current.value = '';
+  };
+
+  const openGLMFile = (name: string) => {
+      setActiveGLMTabId(name);
+      setGLMMidColumnMode('editor');
+  };
+
+  const handleDownloadGLMFile = (fileName: string, content: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
   // ------------------------------------------------------------------------
   // INLINE FILE HANDLING HANDLERS
   // ------------------------------------------------------------------------
@@ -985,8 +1884,38 @@ except Exception as e:
       setMidColumnMode('editor');
   };
 
+  const handleDownloadFile = (fileName: string, content: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
   const handleSaveStudy = () => {
-      const studyData = { timestamp: Date.now(), files, systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, chatMessages, consoleLogs };
+      const studyData = { 
+          timestamp: Date.now(), 
+          files, 
+          systemKb, 
+          langKb, 
+          studyKb, 
+          hashMemoryKb, 
+          beliefsKb, 
+          chatMessages, 
+          consoleLogs,
+          // Support GLM States
+          glmFiles,
+          glmChatMessages,
+          glmConsoleLogs,
+          glmStatus,
+          glmChatMode,
+          glmEffortTicks
+      };
       const blob = new Blob([JSON.stringify(studyData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1044,6 +1973,23 @@ except Exception as e:
               
               if (data.chatMessages) setChatMessages(data.chatMessages);
               if (data.consoleLogs) setConsoleLogs(data.consoleLogs);
+
+              // Restore GLM states if present in the loaded study
+              if (data.glmFiles) {
+                  const cleanGlmFiles = data.glmFiles.filter((f: any) => !f.name.toLowerCase().startsWith('glm_'));
+                  setGLMFiles(cleanGlmFiles);
+                  if (cleanGlmFiles.length > 0) {
+                      setActiveGLMTabId(cleanGlmFiles[0].name);
+                  }
+                  if (isPyodideReady) {
+                      for (const f of cleanGlmFiles) await pyodideService.writeFile(f.name, f.content);
+                  }
+              }
+              if (data.glmChatMessages) setGLMChatMessages(data.glmChatMessages);
+              if (data.glmConsoleLogs) setGLMConsoleLogs(data.glmConsoleLogs);
+              if (data.glmStatus) setGLMStatus(data.glmStatus);
+              if (data.glmChatMode) setGLMChatMode(data.glmChatMode);
+              if (data.glmEffortTicks) setGLMEffortTicks(data.glmEffortTicks);
               
               if (isPyodideReady) await fetchFOMState();
               
@@ -1120,6 +2066,22 @@ except Exception as e:
             <div className="text-[10px] text-gray-500">Reflexive Memory • Frame of Mind • Local AI</div>
           </div>
         </div>
+
+        {/* WORKSPACE MODE SWITCHER */}
+        <div className="flex bg-[#161412] rounded p-0.5 border border-[#2d251f]">
+           <button 
+              onClick={() => setCurrentStudioMode('ubp')} 
+              className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${currentStudioMode === 'ubp' ? 'bg-cyan-600 text-black shadow-[0_0_10px_rgba(8,145,178,0.3)]' : 'text-gray-400 hover:text-white'}`}
+           >
+              🧬 UBP Studio
+           </button>
+           <button 
+              onClick={() => setCurrentStudioMode('glm')} 
+              className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${currentStudioMode === 'glm' ? 'bg-amber-500 text-black shadow-[0_0_10px_rgba(245,158,11,0.3)]' : 'text-gray-400 hover:text-white'}`}
+           >
+              📐 GLM Workspace
+           </button>
+        </div>
         
         <div className="flex items-center gap-3">
              <div className="flex bg-gray-800 rounded p-1 border border-gray-700">
@@ -1152,7 +2114,9 @@ except Exception as e:
       {/* MAIN CONTAINER */}
       <div className="flex-1 flex overflow-hidden relative">
       
-        {/* LEFT COLUMN: CHAT */}
+        {currentStudioMode === 'ubp' ? (
+          <>
+            {/* LEFT COLUMN: CHAT */}
         <div className={`${mobileTab === 'chat' ? 'flex' : 'hidden'} md:flex w-full md:w-[30%] md:min-w-[350px] flex-col border-r border-gray-800 pb-2`}>
            <AIProviderSelector 
               selectedProvider={aiProvider}
@@ -1285,6 +2249,14 @@ except Exception as e:
                                         {renamingFile === f.name || fileToDelete === f.name ? null : (
                                             <>
                                                 <button 
+                                                    onClick={(e) => handleDownloadFile(f.name, f.content, e)}
+                                                    className="p-1.5 text-gray-500 hover:text-green-400 bg-gray-800 hover:bg-gray-700 rounded cursor-pointer border border-transparent hover:border-gray-600"
+                                                    title="Download"
+                                                    type="button"
+                                                >
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                                </button>
+                                                <button 
                                                     onClick={(e) => startRename(f.name, e)}
                                                     className="p-1.5 text-gray-500 hover:text-white bg-gray-800 hover:bg-gray-700 rounded cursor-pointer border border-transparent hover:border-gray-600"
                                                     title="Rename"
@@ -1356,11 +2328,412 @@ except Exception as e:
                         )}
                     </div>
                 )}
-                {activeOutputTab === 'memory' && <MemoryStatus systemKb={systemKb} langKb={langKb} hashMemoryKb={hashMemoryKb} beliefsKb={beliefsKb} studyKb={studyKb} onSyncGitHub={handleSyncKBsFromGitHub} />}
+                {activeOutputTab === 'memory' && (
+                    <MemoryStatus 
+                        systemKb={systemKb} 
+                        langKb={langKb} 
+                        hashMemoryKb={hashMemoryKb} 
+                        beliefsKb={beliefsKb} 
+                        studyKb={studyKb} 
+                        onSyncGitHub={handleSyncKBsFromGitHub}
+                        setSystemKb={setSystemKb}
+                        setLangKb={setLangKb}
+                        setHashMemoryKb={setHashMemoryKb}
+                        setBeliefsKb={setBeliefsKb}
+                        setStudyKb={setStudyKb}
+                    />
+                )}
                 {activeOutputTab === 'fom' && <FOMStatus isPyodideReady={isPyodideReady} frames={fomFrames} activeFrameId={activeFrame} onSwitchFrame={handleSwitchFrame} onUpdateFrameJson={handleUpdateFOMJson} onDeleteFrame={handleDeleteFrame} onRefresh={fetchFOMState} onExportFOM={() => { const blob = new Blob([JSON.stringify(fomFrames, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'ubp_fom_index.json'; a.click(); }} onImportFOM={handleImportFOM} />}
             </div>
-        </div>
-      </div>
+          </div>
+        </>
+      ) : (
+        <>
+            {/* GLM COLUMN 1: GLM Chat / Reasoner Interface */}
+            <div className={`${mobileTab === 'chat' ? 'flex' : 'hidden'} md:flex w-full md:w-[30%] md:min-w-[350px] flex-col border-r border-amber-950/30 bg-[#0c0907] pb-2`}>
+               {/* GLM Provider Selector / Mode Switcher */}
+               <div className="bg-[#15110d] border-b border-amber-950/20 p-3">
+                  <div className="flex justify-between items-center mb-2">
+                     <span className="text-xs font-bold text-amber-500 uppercase tracking-widest font-mono">GLM Reasoner Mode</span>
+                     <div className="flex bg-black rounded p-0.5 border border-amber-950/40">
+                        <button 
+                           onClick={() => setGLMChatMode('standard')} 
+                           className={`px-2 py-1 rounded text-[10px] font-bold ${glmChatMode === 'standard' ? 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.2)]' : 'text-gray-400'}`}
+                        >
+                           Standard
+                        </button>
+                        <button 
+                           onClick={() => setGLMChatMode('effort')} 
+                           className={`px-2 py-1 rounded text-[10px] font-bold ${glmChatMode === 'effort' ? 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.2)]' : 'text-gray-400'}`}
+                        >
+                           With Effort
+                        </button>
+                     </div>
+                  </div>
+                  {glmChatMode === 'effort' && (
+                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-950/10 text-[11px]">
+                        <span className="text-gray-400">Max Maturation Ticks:</span>
+                        <div className="flex items-center gap-2">
+                           <input 
+                              type="range" 
+                              min="1" 
+                              max="10" 
+                              value={glmEffortTicks} 
+                              onChange={(e) => setGLMEffortTicks(parseInt(e.target.value))} 
+                              className="w-24 h-1 bg-amber-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                           />
+                           <span className="font-mono text-amber-400 font-bold w-4">{glmEffortTicks}</span>
+                        </div>
+                     </div>
+                  )}
+               </div>
+
+               {/* GLM Action Shortcuts */}
+               <div className="grid grid-cols-2 gap-1 p-2 bg-[#120f0c] border-b border-amber-950/20">
+                  <button 
+                     onClick={bootGLMRuntime} 
+                     disabled={glmStatus === 'booting'}
+                     className={`py-1.5 text-[9px] font-bold uppercase rounded border transition-all ${glmStatus === 'online' ? 'bg-green-950/40 text-green-400 border-green-800/40' : 'bg-amber-950/20 text-amber-400 border-amber-900/30 hover:bg-amber-900/30'}`}
+                  >
+                     {glmStatus === 'online' ? '🟢 GLM Ready' : glmStatus === 'booting' ? '⌛ Booting...' : '🔌 Boot GLM'}
+                  </button>
+                  <button 
+                     onClick={async () => {
+                       if (!isPyodideReady) return;
+                       addGLMConsoleLog('system', "Triggering GLM Autonomous Maturation...");
+                       const res = await pyodideService.runPython("globals()['glm_rt'].mature(5); print('Matured 5 ticks.')");
+                       if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
+                       await updateGLMStates();
+                     }}
+                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
+                  >
+                     🧠 Mature Ticks
+                  </button>
+                  <button 
+                     onClick={async () => {
+                       if (!isPyodideReady) return;
+                       addGLMConsoleLog('system', "Triggering Adversarial Stress Test...");
+                       try {
+                          const res = await pyodideService.runPython("print(globals()['glm_rt'].adversarial())");
+                          if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
+                       } catch (e: any) {
+                          addGLMConsoleLog('system', "Adversarial Stress Test was removed in the Modular v3.7 refactor.");
+                       }
+                       await updateGLMStates();
+                     }}
+                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
+                  >
+                     ⚔️ Stress Test
+                  </button>
+                  <button 
+                     onClick={async () => {
+                       if (!isPyodideReady) return;
+                       addGLMConsoleLog('system', "Synthesizing Cross-Zone Meta-Thesis...");
+                       try {
+                          const res = await pyodideService.runPython("print(globals()['glm_rt'].synthesise())");
+                          if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
+                       } catch (e: any) {
+                          addGLMConsoleLog('system', "Cross-Zone Meta-Synthesis was temporarily disabled in Modular v3.7 refactor.");
+                       }
+                       await updateGLMStates();
+                     }}
+                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
+                  >
+                     🌐 Synthesise
+                  </button>
+               </div>
+
+               {/* GLM Chat Interface */}
+               <div className="flex-1 min-h-0 relative">
+                   <GLMChatInterface 
+                      messages={glmChatMessages}
+                      isLoading={isGLMChatLoading}
+                      onSendMessage={handleSendGLMMessage}
+                      onResetGLM={async () => {
+                        setGLMChatMessages([{ id: 'glm-welcome', role: 'model', content: 'GLM Chat reset. Boot GLM to start fresh.', timestamp: Date.now() }]);
+                        addGLMConsoleLog('system', "Resetting GLM Session...");
+                        await pyodideService.runPython("if 'glm_rt' in globals(): del globals()['glm_rt']");
+                        setGLMStatus('offline');
+                      }}
+                      glmStatus={glmStatus}
+                      chatMode={glmChatMode}
+                       onExportWorkspace={handleExportWorkspace}
+                       onImportWorkspace={handleImportWorkspace}
+                   />
+               </div>
+            </div>
+
+            {/* GLM COLUMN 2: GLM Workspace (Files & Script Editor) */}
+            <div className={`${mobileTab === 'workspace' ? 'flex' : 'hidden'} md:flex flex-1 flex-col min-w-[300px] border-r border-amber-950/30 bg-[#0b0806] pb-2`}>
+               {/* GLM Workspace Toolbar */}
+               <div className="h-12 bg-[#120f0d] border-b border-amber-950/20 flex items-center px-2 justify-between">
+                  <div className="flex gap-1 overflow-x-auto scrollbar-none">
+                      <button onClick={() => setGLMMidColumnMode('files')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${glmMidColumnMode === 'files' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>GLM Files</button>
+                      <button onClick={() => setGLMMidColumnMode('editor')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${glmMidColumnMode === 'editor' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>GLM Editor</button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                     {glmMidColumnMode === 'editor' && activeGLMTabId && (
+                         <button
+                            onClick={handleRunGLMCode}
+                            disabled={isGLMExecuting}
+                            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-black px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1 shadow-[0_0_10px_rgba(217,119,6,0.2)]"
+                         >
+                            ▶️ Run Code
+                         </button>
+                     )}
+                     <button 
+                        onClick={runGLMSelfTests}
+                        disabled={isGLMExecuting}
+                        className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-400 px-2.5 py-1 text-xs font-bold rounded border border-amber-900/30 flex items-center gap-1"
+                        title="Execute the 12 built-in self-tests of GLM v3.7.3"
+                     >
+                        🧪 Self-Tests
+                     </button>
+                     <button 
+                        onClick={runGLMBenchmarks}
+                        disabled={isGLMExecuting}
+                        className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-400 px-2.5 py-1 text-xs font-bold rounded border border-amber-900/30 flex items-center gap-1"
+                        title="Execute the 28 gold-set benchmarks"
+                     >
+                        📊 Benchmarks
+                     </button>
+                     <button 
+                        onClick={async () => {
+                          addGLMConsoleLog('system', "Syncing GLM files from GitHub...");
+                          const fetched = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+                          if (fetched.length > 0) {
+                            setGLMFiles(fetched);
+                            addGLMConsoleLog('system', `Successfully pulled ${fetched.length} files.`);
+                          }
+                        }}
+                        className="p-1 hover:bg-amber-950/30 text-amber-500/80 hover:text-amber-400 rounded transition-all"
+                        title="Reload all GLM files from repository"
+                     >
+                        🔄
+                     </button>
+                  </div>
+               </div>
+
+               {/* GLM Workspace Content */}
+               <div className="flex-1 min-h-0">
+                   {glmMidColumnMode === 'files' ? (
+                       <div id="glm-file-explorer" className="p-4 flex flex-col h-full overflow-y-auto">
+                          <div className="flex justify-between items-center mb-3">
+                             <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">GLM Files Workspace</h3>
+                             <div className="flex gap-1.5">
+                                 <button onClick={startCreateGLMFile} className="bg-amber-950/30 border border-amber-900/30 hover:bg-amber-900/40 text-amber-400 px-2.5 py-1 text-xs rounded font-medium flex items-center gap-1">
+                                     ➕ New File
+                                 </button>
+                                 <button onClick={() => glmUploadFileRef.current?.click()} className="bg-amber-950/30 border border-amber-900/30 hover:bg-amber-900/40 text-amber-400 px-2.5 py-1 text-xs rounded font-medium flex items-center gap-1">
+                                     📤 Upload
+                                 </button>
+                                 <input type="file" ref={glmUploadFileRef} onChange={handleUploadGLMFile} className="hidden" />
+                             </div>
+                          </div>
+
+                          {isGLMCreatingFile && (
+                              <form onSubmit={submitCreateGLMFile} className="mb-3 flex gap-2">
+                                 <input 
+                                    ref={glmNewFileInputRef}
+                                    type="text" 
+                                    placeholder="filename.py" 
+                                    value={newGLMFileName} 
+                                    onChange={(e) => setNewGLMFileName(e.target.value)} 
+                                    className="flex-1 bg-black text-sm text-gray-100 rounded px-2 py-1 border border-amber-800"
+                                 />
+                                 <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-3 py-1 rounded text-xs">Create</button>
+                                 <button type="button" onClick={() => setIsGLMCreatingFile(false)} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1 rounded text-xs">Cancel</button>
+                              </form>
+                          )}
+
+                          <div className="flex-1 overflow-y-auto space-y-1">
+                              {glmFiles.length === 0 ? (
+                                  <div className="text-center text-xs text-gray-500 py-10">No GLM files loaded. Pull from repository or create one.</div>
+                              ) : (
+                                  glmFiles.map(file => {
+                                      const isActive = activeGLMTabId === file.name;
+                                      const isRenaming = renamingGLMFile === file.name;
+                                      const isPendingDelete = glmFileToDelete === file.name;
+
+                                      return (
+                                          <div 
+                                             key={file.name} 
+                                             onClick={() => openGLMFile(file.name)}
+                                             className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${isActive ? 'bg-amber-950/20 border-amber-500/30 text-amber-200' : 'border-transparent text-gray-400 hover:bg-amber-950/10 hover:text-amber-300'}`}
+                                          >
+                                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                  <span className="text-sm">📁</span>
+                                                  {isRenaming ? (
+                                                      <form onSubmit={submitRenameGLM} onClick={e => e.stopPropagation()} className="flex-1 flex gap-1">
+                                                          <input 
+                                                             ref={glmRenameInputRef}
+                                                             type="text" 
+                                                             value={renameGLMValue} 
+                                                             onChange={e => setRenameGLMValue(e.target.value)}
+                                                             className="bg-black text-xs text-gray-100 rounded px-1.5 py-0.5 border border-amber-800 flex-1"
+                                                          />
+                                                          <button type="submit" className="text-[10px] bg-amber-600 text-black px-1.5 rounded font-bold">Ok</button>
+                                                          <button type="button" onClick={() => setRenamingGLMFile(null)} className="text-[10px] bg-gray-800 text-gray-300 px-1.5 rounded">X</button>
+                                                      </form>
+                                                  ) : (
+                                                      <span className="text-sm font-mono truncate">{file.name}</span>
+                                                  )}
+                                              </div>
+
+                                              <div className="flex items-center gap-2 shrink-0 pl-2">
+                                                  {isPendingDelete ? (
+                                                      <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                                          <button onClick={confirmDeleteGLM} className="text-[10px] text-red-400 font-bold bg-red-950/40 border border-red-900/30 px-1.5 py-0.5 rounded">Delete</button>
+                                                          <button onClick={cancelDeleteGLM} className="text-[10px] text-gray-400 hover:text-gray-200">Cancel</button>
+                                                      </div>
+                                                  ) : (
+                                                      <>
+                                                          {/* Individual file download button */}
+                                                          <button 
+                                                             onClick={(e) => handleDownloadGLMFile(file.name, file.content, e)}
+                                                             className="p-1 hover:bg-amber-900/20 text-amber-500 hover:text-amber-400 rounded transition-all"
+                                                             title="Download individual file"
+                                                          >
+                                                             ⬇️
+                                                          </button>
+                                                          <button 
+                                                             onClick={(e) => startRenameGLM(file.name, e)}
+                                                             className="p-1 hover:bg-amber-900/20 text-gray-500 hover:text-amber-400 rounded transition-all text-xs"
+                                                             title="Rename file"
+                                                          >
+                                                             ✏️
+                                                          </button>
+                                                          <button 
+                                                             onClick={(e) => requestDeleteGLM(file.name, e)}
+                                                             className="p-1 hover:bg-red-950/20 text-gray-500 hover:text-red-400 rounded transition-all text-xs"
+                                                             title="Delete file"
+                                                          >
+                                                             🗑️
+                                                          </button>
+                                                      </>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      );
+                                  })
+                              )}
+                          </div>
+                       </div>
+                   ) : (
+                       <div id="glm-editor" className="flex flex-col h-full bg-[#070504]">
+                          {activeGLMTabId ? (
+                              <div className="flex-1 flex flex-col overflow-hidden">
+                                 <div className="px-3 py-1.5 bg-[#120e0b] border-b border-amber-950/20 flex justify-between items-center shrink-0">
+                                     <span className="text-xs font-mono text-amber-400/80 font-bold flex items-center gap-1">📝 Editing: {activeGLMTabId}</span>
+                                     <button 
+                                        onClick={(e) => handleDownloadGLMFile(activeGLMTabId, glmFiles.find(f => f.name === activeGLMTabId)?.content || "", e)}
+                                        className="text-[10px] bg-amber-950/30 text-amber-400 hover:bg-amber-900/20 px-2 py-1 rounded border border-amber-900/30 flex items-center gap-1"
+                                     >
+                                        ⬇️ Download File
+                                     </button>
+                                 </div>
+                                 <div className="flex-1 overflow-hidden relative">
+                                     <CodeEditor 
+                                        label={activeGLMTabId}
+                                        code={glmFiles.find(f => f.name === activeGLMTabId)?.content || ""}
+                                        onChange={(newVal) => updateGLMFileContent(activeGLMTabId, newVal)}
+                                     />
+                                 </div>
+                              </div>
+                          ) : (
+                              <div className="flex-1 flex items-center justify-center text-xs text-gray-500 py-10 bg-black/40">
+                                 Select a script from GLM Files to view or edit
+                              </div>
+                          )}
+                       </div>
+                   )}
+               </div>
+            </div>
+
+            {/* GLM COLUMN 3: GLM Active Outputs & Logs (Interactive Diagnostics Engine) */}
+            <div className={`${mobileTab === 'tools' ? 'flex' : 'hidden'} md:flex w-full md:w-[35%] md:min-w-[380px] flex-col bg-[#080604] pb-2`}>
+               {/* Tab bar */}
+               <div className="h-12 bg-[#120f0d] border-b border-amber-950/20 flex items-center px-2 justify-between shrink-0">
+                  <div className="flex gap-1 overflow-x-auto scrollbar-none">
+                      <button onClick={() => setActiveGLMOutputTab('console')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${activeGLMOutputTab === 'console' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>Console Output</button>
+                      <button onClick={() => setActiveGLMOutputTab('diagnostics')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${activeGLMOutputTab === 'diagnostics' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>Live Diagnostics</button>
+                  </div>
+                  <div className="flex items-center gap-1.5 pr-1">
+                     {activeGLMOutputTab === 'console' && (
+                         <button 
+                            onClick={() => setGLMConsoleLogs([])} 
+                            className="text-[10px] bg-amber-950/20 hover:bg-amber-900/20 border border-amber-900/20 text-amber-500 hover:text-amber-400 px-2 py-0.5 rounded"
+                         >
+                            Clear
+                         </button>
+                     )}
+                     <button 
+                        onClick={updateGLMStates} 
+                        className="p-1 hover:bg-amber-950/30 text-amber-500/80 hover:text-amber-400 rounded transition-all"
+                        title="Refresh diagnostics variables"
+                     >
+                        🔄
+                     </button>
+                  </div>
+               </div>
+
+               {/* Content area */}
+               <div className="flex-1 min-h-0 relative">
+                  {activeGLMOutputTab === 'console' ? (
+                      <div id="glm-console" className="h-full flex flex-col bg-black overflow-hidden relative font-mono text-xs text-amber-400">
+                         <div className="flex-1 overflow-y-auto p-3 space-y-1 select-text scrollbar-thin">
+                            {glmConsoleLogs.length === 0 ? (
+                                <div className="text-gray-600 text-[11px] italic">{">>>"} Console inactive. Executing operations or boot will output logs here...</div>
+                            ) : (
+                                glmConsoleLogs.map((log) => {
+                                   let color = "text-amber-400";
+                                   let prefix = ">>>";
+                                   if (log.type === "stderr" || log.type === "error") { color = "text-red-400"; prefix = "⚠️"; }
+                                   else if (log.type === "system") { color = "text-amber-500 font-bold"; prefix = "⚙️"; }
+                                   
+                                   return (
+                                       <div key={log.id} className={`${color} leading-relaxed whitespace-pre-wrap`}>
+                                           <span className="opacity-50 select-none mr-2">{prefix}</span>
+                                           {log.content}
+                                       </div>
+                                   );
+                                })
+                            )}
+                         </div>
+                      </div>
+                  ) : (
+                      <div id="glm-diagnostics" className="h-full overflow-y-auto p-4 space-y-4 bg-[#0a0806] scrollbar-thin">
+                          {/* Active Zone State */}
+                          <div className="border border-amber-900/30 bg-amber-950/5 rounded-lg p-3">
+                             <h4 className="text-xs font-bold uppercase tracking-wider text-amber-500 mb-2 font-mono flex items-center gap-1.5">🎛️ Geometric Last Diagnostics</h4>
+                             <div className="bg-black/40 border border-amber-900/20 rounded p-2.5 max-h-56 overflow-y-auto font-mono text-[11px] text-amber-300/80">
+                                {glmLastDiag ? (
+                                    <pre className="whitespace-pre-wrap">{glmLastDiag}</pre>
+                                ) : (
+                                    <span className="text-gray-600 italic">No diagnostic state captured. Ask the reasoner a question or boot the machine to fetch variables.</span>
+                                )}
+                             </div>
+                          </div>
+
+                          {/* Active Idea Matrix */}
+                          <div className="border border-amber-900/30 bg-amber-950/5 rounded-lg p-3">
+                             <h4 className="text-xs font-bold uppercase tracking-wider text-amber-500 mb-2 font-mono flex items-center gap-1.5">🗺️ Current Metatheoretical State</h4>
+                             <div className="bg-black/40 border border-amber-900/20 rounded p-2.5 max-h-56 overflow-y-auto font-mono text-[11px] text-amber-300/80">
+                                {glmIdeaState ? (
+                                    <pre className="whitespace-pre-wrap">{glmIdeaState}</pre>
+                                ) : (
+                                    <span className="text-gray-600 italic">No metatheoretical state captured.</span>
+                                )}
+                             </div>
+                          </div>
+                      </div>
+                  )}
+               </div>
+            </div>
+        </>
+      )}
+    </div>
 
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
