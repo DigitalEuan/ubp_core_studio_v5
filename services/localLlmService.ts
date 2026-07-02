@@ -123,6 +123,7 @@ export class LocalLLMService {
     userMessage: string,
     history: { role: string; content: string }[] = [],
     files: FileTab[] = [],
+    glmFiles: FileTab[] = [],
     systemKb: string = '',
     langKb: string = '',
     studyKb: string = '',
@@ -144,17 +145,29 @@ export class LocalLLMService {
       }
 
       // Build context (Truncated for local LLMs which often have smaller context windows)
-      const fileContext = files
-        .slice(-20)
-        .map(f => `--- File: ${f.name} ---\n${truncate(f.content, 10000)}`)
-        .join('\n\n');
+      const validFiles = files.filter(f => f && f.name);
+      const validGlmFiles = glmFiles.filter(f => f && f.name);
+
+      let fileContext = "=== WORKSPACE FILES (UBP TAB) ===\n";
+      if (validFiles.length > 0) {
+        fileContext += validFiles.slice(-20).map(f => `--- File: ${f.name} ---\n${truncate(f.content, 10000)}`).join('\n\n');
+      } else {
+        fileContext += "NO UBP FILES CURRENTLY OPEN.\n";
+      }
+
+      fileContext += "\n\n=== GLM FILES (GLM WORKSPACE TAB) ===\n";
+      if (validGlmFiles.length > 0) {
+        fileContext += validGlmFiles.slice(-20).map(f => `--- File: glm_test_dir/${f.name} ---\n${truncate(f.content, 10000)}`).join('\n\n');
+      } else {
+        fileContext += "NO GLM FILES CURRENTLY OPEN.\n";
+      }
 
       const systemPrompt = `You are the UBP Research Cortex (v5) AI Assistant running locally on Mac.
 You have access to Python (Pyodide) for code execution and can help with:
 - UBP (Universal Binary Principle) research
 - Python script development
 - Mathematical analysis
-- Data visualization
+- Data visualization (You can generate plots by saving them to 'plot.png' e.g. plt.savefig('plot.png'). These render automatically.)
 
 INSTRUCTION MANUAL:
 ${truncate(instructionManual, 10000)}

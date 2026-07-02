@@ -1065,14 +1065,14 @@ except Exception as e:
             const apiKey = process.env.GEMINI_API_KEY || '';
             const gemini = new GeminiService(apiKey, selectedModel);
             const history = chatMessages.map(m => ({ role: m.role, content: m.content }));
-            const res = await gemini.generateStudyPlan(history, text, files, systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, instructionManual, attachments);
+            const res = await gemini.generateStudyPlan(history, text, files, glmFiles, systemKb, langKb, studyKb, hashMemoryKb, beliefsKb, instructionManual, attachments);
             responseText = res.text;
             thought = res.thought;
             groundingUrls = res.groundingUrls;
         } else {
              if (!localLLMService) throw new Error("Local LLM not ready");
              const history = chatMessages.map(m => ({ role: m.role, content: m.content }));
-             const res = await localLLMService.generateResponse(text, history, files, systemKb, langKb, studyKb, hashMemoryKb, instructionManual);
+             const res = await localLLMService.generateResponse(text, history, files, glmFiles, systemKb, langKb, studyKb, hashMemoryKb, instructionManual);
              responseText = res.text;
         }
 

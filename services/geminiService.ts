@@ -103,6 +103,7 @@ export class GeminiService {
     history: { role: string; content: string }[],
     userMessage: string,
     files: FileTab[],
+    glmFiles: FileTab[],
     systemKb: string,
     langKb: string,
     studyKb: string,
@@ -114,14 +115,29 @@ export class GeminiService {
     
     // 1. Prepare Context (Files & Attachments) with Balanced TurboQuant Compression
     const validFiles = files.filter(f => f && f.name);
+    const validGlmFiles = glmFiles.filter(f => f && f.name);
     
-    const fileContext = validFiles.length > 0 
-      ? validFiles.slice(-40).map(f => `
-=== START FILE: ${f.name} (Type: ${f.type}) ===
-${this.truncateFileContent(f.content, 120000)}
-=== END FILE: ${f.name} ===
-`).join('\n')
-      : "NO FILES CURRENTLY OPEN IN WORKSPACE.";
+    let fileContext = "=== WORKSPACE FILES (UBP TAB) ===\n";
+    if (validFiles.length > 0) {
+      fileContext += validFiles.slice(-40).map(f => `
+--- START FILE: ${f.name} (Type: ${f.type}) ---
+${this.truncateFileContent(f.content, 60000)}
+--- END FILE: ${f.name} ---
+`).join('\n');
+    } else {
+      fileContext += "NO UBP FILES CURRENTLY OPEN.\n";
+    }
+
+    fileContext += "\n=== GLM FILES (GLM WORKSPACE TAB) ===\n";
+    if (validGlmFiles.length > 0) {
+      fileContext += validGlmFiles.slice(-40).map(f => `
+--- START FILE: glm_test_dir/${f.name} (Type: ${f.type}) ---
+${this.truncateFileContent(f.content, 60000)}
+--- END FILE: glm_test_dir/${f.name} ---
+`).join('\n');
+    } else {
+      fileContext += "NO GLM FILES CURRENTLY OPEN.\n";
+    }
 
     const attachmentContext = attachments.slice(-15).map(doc => `
 === ATTACHMENT: ${doc.name} ===
@@ -142,8 +158,8 @@ You are the **UBP Research Cortex v5 AI Assistant**. Your goal is to design, ver
 
 ### CORE ARCHITECTURE & CAPABILITIES:
 1.  **Python Kernel (Pyodide):** You can write and execute Python code.
-    - **FILE I/O:** You can create persistent files in the workspace (e.g., \`with open('my_data.json', 'w') as f: ...\`). These files immediately appear in the user's file list.
-    - **Visualization:** You can generate plots (matplotlib) or 3D scenes (JSON format) which render in the "Visual" tab.
+    - **FILE I/O:** You can create persistent files in the workspace (e.g., \`with open('my_data.json', 'w') as f: ...\`). These files immediately appear in the user's file list. Note there are two tabs, UBP Workspace and GLM Workspace. GLM files are placed in \`glm_test_dir/\` by the system or downloaded from GitHub.
+    - **Visualization:** You can generate plots (matplotlib) by saving them to \`plot.png\` (e.g., \`plt.savefig('plot.png')\`). They will automatically render in the "Visual" tab. You can also generate 3D scenes by saving to \`scene_3d.json\`.
     - **Precision:** Use Python for ALL calculations to avoid floating-point errors.
     - **System Memory:** The system memory is a structured JSON file (\`ubp_system_kb.json\`).
 
