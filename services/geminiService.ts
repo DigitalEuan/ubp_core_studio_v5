@@ -130,11 +130,12 @@ ${this.truncateFileContent(f.content, 60000)}
 
     fileContext += "\n=== GLM FILES (GLM WORKSPACE TAB) ===\n";
     if (validGlmFiles.length > 0) {
-      fileContext += validGlmFiles.slice(-40).map(f => `
---- START FILE: glm_test_dir/${f.name} (Type: ${f.type}) ---
-${this.truncateFileContent(f.content, 60000)}
---- END FILE: glm_test_dir/${f.name} ---
-`).join('\n');
+      fileContext += validGlmFiles.slice(-40).map(f => {
+        if (f.name === 'glm_unified_resource.json') {
+          return `\n--- START FILE: ${f.name} (Type: ${f.type}) ---\n[CONTENT OMITTED: 14.4MB JSON database. Access this file via Python using json.load(open('glm_unified_resource.json'))]\n--- END FILE: ${f.name} ---\n`;
+        }
+        return `\n--- START FILE: ${f.name} (Type: ${f.type}) ---\n${this.truncateFileContent(f.content, 60000)}\n--- END FILE: ${f.name} ---\n`;
+      }).join('\n');
     } else {
       fileContext += "NO GLM FILES CURRENTLY OPEN.\n";
     }
@@ -158,7 +159,7 @@ You are the **UBP Research Cortex v5 AI Assistant**. Your goal is to design, ver
 
 ### CORE ARCHITECTURE & CAPABILITIES:
 1.  **Python Kernel (Pyodide):** You can write and execute Python code.
-    - **FILE I/O:** You can create persistent files in the workspace (e.g., \`with open('my_data.json', 'w') as f: ...\`). These files immediately appear in the user's file list. Note there are two tabs, UBP Workspace and GLM Workspace. GLM files are placed in \`glm_test_dir/\` by the system or downloaded from GitHub.
+    - **FILE I/O:** You can create persistent files in the workspace (e.g., \`with open('my_data.json', 'w') as f: ...\`). These files immediately appear in the user's file list. Note there are two tabs, UBP Workspace and GLM Workspace. Both UBP and GLM files are placed in the root workspace directory (\`/home/pyodide\`) or downloaded from GitHub.
     - **Visualization:** You can generate plots (matplotlib) by saving them to \`plot.png\` (e.g., \`plt.savefig('plot.png')\`). They will automatically render in the "Visual" tab. You can also generate 3D scenes by saving to \`scene_3d.json\`.
     - **Precision:** Use Python for ALL calculations to avoid floating-point errors.
     - **System Memory:** The system memory is a structured JSON file (\`ubp_system_kb.json\`).

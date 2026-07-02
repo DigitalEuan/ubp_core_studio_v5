@@ -131,7 +131,7 @@ def compose_response(
     if deliberation:
         parts.append(format_deliberation(deliberation))
 
-    # G. Reflexive Recall Block (NEW)
+    # G. Reflexive Recall Block
     if recalled:
         recall_parts = []
         for entry in recalled[:3]: # Show top 3 matches

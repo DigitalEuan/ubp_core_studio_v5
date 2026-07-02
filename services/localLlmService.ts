@@ -157,7 +157,12 @@ export class LocalLLMService {
 
       fileContext += "\n\n=== GLM FILES (GLM WORKSPACE TAB) ===\n";
       if (validGlmFiles.length > 0) {
-        fileContext += validGlmFiles.slice(-20).map(f => `--- File: glm_test_dir/${f.name} ---\n${truncate(f.content, 10000)}`).join('\n\n');
+        fileContext += validGlmFiles.slice(-20).map(f => {
+          if (f.name === 'glm_unified_resource.json') {
+            return `--- File: ${f.name} ---\n[CONTENT OMITTED: 14.4MB JSON database. Access this file via Python using json.load(open('glm_unified_resource.json'))]`;
+          }
+          return `--- File: ${f.name} ---\n${truncate(f.content, 10000)}`;
+        }).join('\n\n');
       } else {
         fileContext += "NO GLM FILES CURRENTLY OPEN.\n";
       }
