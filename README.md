@@ -96,7 +96,7 @@ GLM is the UBP experimental AI/LLM. It moves beyond token probability by groundi
 | :--- | :--- | :--- |
 | **Studio Frontend** | `/src` | React/Vite interface and orchestration. |
 | **GLM Engine** | `/glm_test_dir` | Core backend reasoning, substrate, and KB management (the App uses these files). |
-| **Knowledge Bases** | `/glm_test_dir` | `ubp_system_kb.json` and `ubp_lang_kb_combined_v4.json` (needs to be moved to the normal '/src'). |
+| **Knowledge Bases** | `/src` | React/Vite interface and orchestration. |
 
 ---
 
