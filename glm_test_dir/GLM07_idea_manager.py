@@ -22,7 +22,7 @@ class MetaThesis:
 
 class IdeaManager:
     """Manages multiple competing IdeaZone instances + cross-zone synthesis."""
-    
+
     def __init__(self, max_zones: int = MAX_ZONES, vocab=None, crg=None):
         self.max_zones = max_zones
         self.vocab = vocab

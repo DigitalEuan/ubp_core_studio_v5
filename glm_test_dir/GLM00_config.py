@@ -14,10 +14,8 @@ ROOT_DIR = Path(os.getcwd())
 core_env = os.environ.get('UBP_CORE_PATH')
 if core_env:
     UBP_CORE_PATH = Path(core_env)
-elif (ROOT_DIR / "ubp_system_kb.json").exists():
-    UBP_CORE_PATH = ROOT_DIR
-elif (ROOT_DIR.parent / "ubp_system_kb.json").exists():
-    UBP_CORE_PATH = ROOT_DIR.parent
+elif os.path.exists("/app/applet/glm_test_dir/ubp_system_kb.json"):
+    UBP_CORE_PATH = Path("/app/applet/glm_test_dir")
 else:
     UBP_CORE_PATH = ROOT_DIR
 
