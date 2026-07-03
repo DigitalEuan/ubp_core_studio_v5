@@ -17,6 +17,10 @@ from GLM08_idea_meta_graph import IdeaMetaGraph
 from GLM09_tools import detect_compute, evaluate_numeric, detect_symbolic, evaluate_symbolic, ground_result
 from GLM10_response_composer import compose_response
 from GLM13_deliberative_reasoning import deliberate
+from GLM14_lexer import MultiTokenLexer, scrub_latex   # v3.8.0: multi-token + LaTeX
+from GLM16_master_resource import inject_master_relations, master_resource_status  # v3.9.0
+from GLM17_semantic_frames import generate_explanation, verbalise_backbone  # v3.9.0
+from GLM18_hex_colour import idea_signature, word_to_colour  # v3.9.0
 from GLM00_config import KB_SYSTEM_PATH
 
 class GLMRuntimeV37:
@@ -97,24 +101,38 @@ class GLMRuntimeV37:
         print("[GLM] Booting stack...")
         self.vocab_dict = FallbackDict(_build_vocabulary())
         self.crg = build_extended_crg()
-        
+
         # Inject Numbers
         inject_number_vocab(self.vocab_dict)
-        
+
         # Expand Graph
         if auto_expand:
             self.auto_expansions = auto_expand_crg(self.crg, self.vocab_dict)
             lattice_auto_link(self.crg, self.vocab_dict)
-            
+
         # Wrap vocab for manager
         class Vocab:
             def __init__(self, d): self.words = d
         self.vocab = Vocab(self.vocab_dict)
-        
+
+        # v3.8.0: Build a multi-token lexer from the live vocabulary.
+        # This preserves multi-word concepts like 'weyl anomaly' and scrubs
+        # LaTeX ($\alpha$ -> 'alpha') before tokenisation.
+        self.lexer = MultiTokenLexer(self.vocab_dict.keys())
+
+        # v3.9.0: Inject the 70 element↔law `relates_to` edges from the
+        # master resource.  Non-fatal if the resource is missing.
+        try:
+            inject_master_relations(self.crg)
+        except Exception:
+            pass
+
         self.manager = IdeaManager(vocab=self.vocab, crg=self.crg)
         self.meta_graph = IdeaMetaGraph()
         self._turn = 0
         self._kb_cache = None # Lazy load for recall
+        # v3.9.0: cache the master resource status for diagnostics
+        self._master_status = master_resource_status()
 
     def _reflexive_recall(self, query: str) -> List[Dict[str, Any]]:
         """Recall relevant KB entries using alias map + ID match + phrase match.
@@ -122,6 +140,11 @@ class GLMRuntimeV37:
         v3.7.7: Added alias map consultation (word → ubp_id → KB entry).
         This fixes the issue where 'what is time?' didn't surface the
         Time KB entry because 'time' wasn't directly in any KB name.
+
+        v3.8.0: Also consults the multi-token lexer output so multi-word
+        physics terms like 'weyl anomaly' contribute to recall.  And adds
+        direct vocab-definition recall for terms that have a physics-pack
+        definition but no KB entry.
         """
         if self._kb_cache is None:
             self._kb_cache = _load_system_kb()
@@ -136,12 +159,26 @@ class GLMRuntimeV37:
                 recalled.append(self._kb_cache[uid])
 
         # B. Alias map match (word → ubp_id → KB entry)
+        # v3.8.0: use lexer output (preserves multi-word phrases) + fallback
+        # to simple word extraction.
         try:
             alias_map = _build_alias_map()
             stop = {"the", "a", "an", "of", "is", "are", "what", "how", "tell",
                     "me", "about", "and", "in", "to", "for", "with", "explain",
                     "describe", "show", "find", "all", "positive", "integers"}
-            query_words = set(w for w in re.findall(r'\b[a-z]{3,}\b', ql) if w not in stop)
+            # Use the lexer to get clean tokens (includes multi-word phrases)
+            try:
+                lexer_tokens = self.lexer.tokenise(ql)
+            except Exception:
+                lexer_tokens = re.findall(r'\b[a-z]{3,}\b', ql)
+            query_words = set()
+            for t in lexer_tokens:
+                # Split multi-word phrases so each component also gets a chance
+                query_words.add(t)
+                for part in t.split():
+                    if len(part) >= 3:
+                        query_words.add(part)
+            query_words -= stop
             for word in query_words:
                 uid = alias_map.get(word)
                 if uid and uid in self._kb_cache:
@@ -158,6 +195,29 @@ class GLMRuntimeV37:
                 if entry not in recalled:
                     recalled.append(entry)
             if len(recalled) >= 5: break
+
+        # D. v3.8.0: Vocab-definition recall for physics-pack terms.
+        # If the query contains a multi-word physics term that's in the vocab
+        # but not the KB, fabricate a minimal "recalled" entry from the
+        # physics-pack definition so the response composer can surface it.
+        try:
+            for tok in self.lexer.tokenise(ql):
+                entry = self.vocab_dict.get(tok)
+                if entry and hasattr(entry, 'definition') and entry.definition:
+                    # Build a synthetic recalled entry
+                    synth = {
+                        "ubp_id": getattr(entry, 'ubp_id', f"PV_{tok}"),
+                        "name": tok.title() if ' ' in tok else tok.capitalize(),
+                        "desc": entry.definition,
+                        "vector": entry.vector,
+                        "nrci": float(entry.nrci),
+                        "_source": "physics_pack",
+                    }
+                    if synth not in recalled:
+                        recalled.append(synth)
+                    if len(recalled) >= 5: break
+        except Exception:
+            pass
 
         return recalled[:5]
 
@@ -203,11 +263,18 @@ class GLMRuntimeV37:
             
         # 3. Reflexive Recall
         recalled = self._reflexive_recall(resolved)
-            
+
         # 4. Linguistic Processing
-        tokens = re.findall(r"\b[a-z_]+\b", resolved.lower())
+        # v3.8.0: Use the MultiTokenLexer instead of naive whitespace split.
+        # This preserves multi-word concepts ('weyl anomaly', 'beta function'),
+        # scrubs LaTeX ($\alpha$ -> 'alpha'), and lemmatises plurals/verbs.
+        try:
+            tokens = self.lexer.tokenise(resolved)
+        except Exception:
+            # Fallback to original behaviour if the lexer fails
+            tokens = re.findall(r"\b[a-z_]+\b", resolved.lower())
         # Filter out function words BEFORE passing to manager — they pollute topic_nouns
-        content = [(t, self.vocab_dict[t]) for t in tokens 
+        content = [(t, self.vocab_dict[t]) for t in tokens
                    if t in self.vocab_dict and t not in FUNCTION_WORDS]
         unknown = [t for t in tokens if t not in self.vocab_dict and t not in FUNCTION_WORDS]
         
@@ -259,12 +326,61 @@ class GLMRuntimeV37:
         self._turn = 0
 
     def idea_state(self):
-        """Returns the full state of the short-term manager and long-term meta-graph."""
+        """Returns the full state of the short-term manager and long-term meta-graph.
+
+        v3.9.0: also includes the colour signature of the active zone.
+        """
         return {
-            "turn": self._turn, 
-            "manager": self.manager.state(), 
-            "meta": self.meta_graph.stats()
+            "turn": self._turn,
+            "manager": self.manager.state(),
+            "meta": self.meta_graph.stats(),
+            # v3.9.0: hex colour signature of the active zone
+            "colour": idea_signature(self.manager.active),
+            # v3.9.0: master resource status (vocab size, etc.)
+            "master": self._master_status,
         }
 
     def mature(self, n: int = 3):
         self.manager.mature_all(n)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # v3.9.0: NEW PUBLIC APIs
+    # ════════════════════════════════════════════════════════════════════════
+
+    def explain(self, query: str = "") -> str:
+        """Generate a natural-language explanation of the current zone state.
+
+        Uses the semantic frames module (GLM17) to compose multi-sentence
+        explanations from the zone's CRG backbone.  This is the natural-
+        language ability upgrade: instead of emitting "[Backbone] a | b"
+        tags, we generate "Hamiltonian generates time. Hamiltonian commutes
+        with symmetry."
+
+        If `query` is provided, frames are selected based on the query type.
+        Otherwise, all available frames are tried.
+        """
+        return generate_explanation(self.manager.active, query=query)
+
+    def idea_colour(self) -> dict:
+        """Return the hex colour signature of the current idea zone.
+
+        Includes:
+          * primary:    colour of the zone centroid
+          * secondary:  colour of the most recent evidence
+          * blend:      colour of all evidence blended together
+          * nrci:       the zone's NRCI score
+          * mog:        the dominant MOG category
+          * evidence_count: how many evidence vectors contributed
+
+        The Pyodide UI can use this to render an 'idea aura' that shifts
+        colour as the conversation evolves.
+        """
+        return idea_signature(self.manager.active)
+
+    def word_colour(self, word: str) -> Optional[str]:
+        """Look up the hex colour of a vocab word.  Returns None if not found."""
+        return word_to_colour(word, self.vocab)
+
+    def master_status(self) -> dict:
+        """Report whether the master resource is loaded and its size."""
+        return self._master_status

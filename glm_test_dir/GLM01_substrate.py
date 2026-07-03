@@ -139,7 +139,9 @@ class ConceptRelationGraph:
     def stats(self):
         return {"total_edges": len(self.edges), "nodes": len({n for e in self.edges for n in (e.src, e.dst)})}
 
-# Full curated physics edges (57+ — restored from original monolith)
+# Full curated physics edges (v3.8.0: 100+ edges, includes multi-word concepts
+# drawn from core/glm_concept_relation_graph.py — restored from original monolith
+# plus the richer CritPt-domain set).
 _RAW_EDGES = [
     # identities / classifications
     ("hamiltonian","is_a","operator"), ("lagrangian","is_a","functional"),
@@ -151,16 +153,58 @@ _RAW_EDGES = [
     ("anticommutator","is_a","operator"), ("ground state","is_a","state"),
     ("coherent state","is_a","state"), ("squeezed state","is_a","state"),
     ("projector","is_a","operator"), ("hadron","is_a","particle"),
+    # v3.8.0 additions
+    ("partition function","is_a","functional"),
+    ("pion","is_a","meson"),
+    ("matrix product","is_a","state"),
+    ("kraus operator","is_a","operator"),
+    ("tetrad","is_a","connection"),
+    ("ads","is_a","manifold"),
+    ("brane","is_a","manifold"),
+    ("quantum metric","is_a","metric"),
+    ("hilbert space","is_a","manifold"),
+    ("excited state","is_a","state"),
+    ("baryon","is_a","hadron"),
+    ("fermi liquid","is_a","state"),
+    ("beta function","is_a","function"),
+    ("dot product","is_a","operator"),
+    ("cross product","is_a","operator"),
+    ("path integral","is_a","integral"),
     # has_property
     ("majorana","has_property","topological"), ("weyl anomaly","has_property","conformal"),
     ("quark","has_property","massive"), ("gluon","has_property","massless"),
     ("photon","has_property","massless"), ("hubbard","has_property","strong"),
+    # v3.8.0 additions
+    ("parafermion","has_property","topological"),
+    ("chern number","has_property","topological"),
+    ("hatsugai-kohmoto","has_property","strong"),
+    ("ads","has_property","holographic"),
+    ("squeezed state","has_property","quantum"),
+    ("coherent state","has_property","quantum"),
+    ("rayleigh number","has_property","critical"),
+    ("convection","has_property","critical"),
+    ("weyl","has_property","conformal"),
+    ("qft","has_property","relativistic"),
     # depends_on
     ("beta","depends_on","coupling"), ("anomaly","depends_on","dimension"),
     ("weyl anomaly","depends_on","metric"), ("weyl anomaly","depends_on","curvature"),
     ("renormalization","depends_on","regulator"), ("rayleigh number","depends_on","prandtl"),
     ("convection","depends_on","rayleigh number"), ("parton","depends_on","scale"),
     ("hubbard","depends_on","tunneling"), ("hubbard","depends_on","interaction"),
+    # v3.8.0 additions
+    ("beta","depends_on","scaling"),
+    ("regularization","depends_on","dimension"),
+    ("rayleigh number","depends_on","temperature"),
+    ("dephasing","depends_on","dissipator"),
+    ("spin squeezing","depends_on","variance"),
+    ("wineland parameter","depends_on","spin squeezing"),
+    ("dglap","depends_on","coupling"),
+    ("loop","depends_on","regularization"),
+    ("matching kernel","depends_on","coupling"),
+    ("beta function","depends_on","coupling"),
+    ("gamma distribution","depends_on","waiting time"),
+    ("growth rate","depends_on","gamma distribution"),
+    ("holevo information","depends_on","density matrix"),
     # commutes_with (symmetric)
     ("hamiltonian","commutes_with","symmetry"), ("projector","commutes_with","hamiltonian"),
     ("density matrix","commutes_with","hamiltonian"), ("number","commutes_with","hamiltonian"),
@@ -168,9 +212,15 @@ _RAW_EDGES = [
     # scales_as
     ("rayleigh number","scales_as","temperature"), ("propagator","scales_as","momentum"),
     ("hubbard","scales_as","tunneling"), ("dispersion","scales_as","wavenumber"),
+    # v3.8.0 additions
+    ("growth rate","scales_as","coupling"),
+    ("photocurrent","scales_as","power"),
+    ("synchrotron","scales_as","energy"),
     # is_dual_to (symmetric)
     ("ads","is_dual_to","bcft"), ("holographic","is_dual_to","conformal"),
     ("brane","is_dual_to","boundary"), ("lamet","is_dual_to","parton"),
+    # v3.8.0 additions
+    ("matrix product","is_dual_to","tensor"),
     # generates
     ("hamiltonian","generates","time"), ("momentum","generates","space"),
     ("symmetry","generates","anomaly"), ("renormalization","generates","beta"),
@@ -179,11 +229,23 @@ _RAW_EDGES = [
     ("entropy","measures","dimension"), ("chern number","measures","topological"),
     ("trace","measures","density matrix"), ("variance","measures","dispersion"),
     ("rayleigh number","measures","instability"),
+    # v3.8.0 additions
+    ("holevo information","measures","information"),
+    ("wineland parameter","measures","squeezing"),
+    ("quantum metric","measures","curvature"),
+    ("expectation value","measures","operator"),
+    ("beta function","measures","scaling"),
     # contradictions
     ("boson","contradicts","fermion"), ("commutator","contradicts","anticommutator"),
     ("continuum","incompatible_with","lattice"), ("classical","incompatible_with","quantum"),
     ("majorana","incompatible_with","dirac"), ("unitary","contradicts","antiunitary"),
     ("real","incompatible_with","imaginary"), ("local","incompatible_with","nonlocal"),
+    # v3.8.0 additions
+    ("on-shell","incompatible_with","off-shell"),
+    ("infrared","incompatible_with","ultraviolet"),
+    ("perturbative","incompatible_with","nonperturbative"),
+    ("free","incompatible_with","interacting"),
+    ("isotropic","incompatible_with","anisotropic"),
 ]
 
 def build_default_crg():
@@ -424,6 +486,25 @@ def _build_vocabulary():
 
     # Inject priority vocab (adds energy, water, time, etc.)
     _inject_priority_vocab(words)
+
+    # v3.8.0: Inject physics pack (197 multi-word + single-word physics terms
+    # with definitions).  Lazy import to avoid circular dependency.
+    try:
+        from GLM15_physics_pack import inject_physics_pack
+        inject_physics_pack(words)
+    except Exception as e:
+        # Non-fatal — physics pack is an enhancement, not a hard requirement.
+        pass
+
+    # v3.9.0: Inject master resource (3900+ general-English dictionary entries
+    # with full definitions, hex_ints, and NRCI scores).  KB and physics-pack
+    # entries take precedence — we never overwrite a grounded entry.
+    try:
+        from GLM16_master_resource import inject_master_vocab
+        inject_master_vocab(words)
+    except Exception:
+        # Non-fatal — master resource is an enhancement.
+        pass
 
     # Overwrite contradiction words with 1-bit-diff vectors
     for cw, vec in CONTRADICTION_FALLBACKS.items():

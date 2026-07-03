@@ -31,6 +31,9 @@ AUTO_EXPAND_CONF     = 0.40 # Confidence for auto-proposed edges
 LATTICE_LINK_RADIUS  = 4    # <--- ADDED: Threshold for aggressive lattice linking
 
 # ── 4. LINGUISTIC FILTERS (Defect D1/D2 Fixes) ─────────────────────────
+# v3.9.0: Extended with common verbs/fillers that the master resource
+# injects as vocab entries (tell, about, discuss, etc.) — they pollute
+# topic_nouns if not filtered.
 FUNCTION_WORDS = frozenset({
     "what","how","why","when","who","where","which","whether",
     "is","are","was","were","be","been","being","do","does","did","done",
@@ -43,6 +46,33 @@ FUNCTION_WORDS = frozenset({
     "i","you","he","she","we","they","it","that","this","those","these",
     "me","my","your","our","their","his","her","its",
     "hello","hi","hey","thanks","thank","please","ok","okay",
+    # v3.9.0 additions — common verbs/fillers from the master resource
+    "discuss","consider","suppose","assume","state","say","said",
+    "use","used","using","uses","make","made","making","makes",
+    "get","got","getting","gets","let","lets","letting",
+    "know","known","knows","knowing","think","thinks","thinking",
+    "see","sees","seeing","seen","saw","look","looks","looking",
+    "come","comes","coming","came","go","goes","going","went",
+    "find","finds","finding","found","want","wants","wanting","wanted",
+    "put","puts","putting","set","sets","setting","take","takes","taking","took",
+    "ask","asks","asking","asked","try","tries","trying","tried",
+    "work","works","working","worked","play","plays","playing","played",
+    "feel","feels","feeling","felt",
+    "become","becomes","becoming","became","seem","seems","seemed",
+    "turn","turns","turning","turned","leave","leaves","leaving","left",
+    "call","calls","called","calling","keep","keeps","keeping","kept",
+    "begin","begins","beginning","began","start","starts","starting","started",
+    "stop","stops","stopping","stopped","end","ends","ending","ended",
+    "live","lives","living","lived","die","dies","dying","died",
+    "eat","eats","eating","ate","drink","drinks","drinking","drank",
+    "sleep","sleeps","sleeping","slept","wake","wakes","waking","woke",
+    "walk","walks","walking","walked","run","runs","running","ran",
+    "stand","stands","standing","stood","sit","sits","sitting","sat",
+    "read","reads","reading","write","writes","writing","wrote",
+    "speak","speaks","speaking","spoke","talk","talks","talking","talked",
+    "hear","hears","hearing","heard","listen","listens","listening","listened",
+    "watch","watches","watching","watched","study","studies","studying","studied",
+    "learn","learns","learning","learned","teach","teaches","teaching","taught",
 })
 
 PRONOUNS = frozenset({

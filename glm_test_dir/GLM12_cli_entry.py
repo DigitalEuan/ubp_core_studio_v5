@@ -4,11 +4,11 @@ from GLM11_runtime import GLMRuntimeV37
 # §12  CLI / TEST ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 def _run_tests():
-    """Self-test harness covering all v3.4–v3.7 features (v3.7.4 build)."""
+    """Self-test harness covering all v3.4–v3.9 features (v3.9.0 build)."""
     import json
     mg = Path(".") / "idea_meta_graph.json"
     if mg.exists(): mg.unlink()
-    print("="*80); print("GLM v3.7.4 SELF-TEST"); print("="*80)
+    print("="*80); print("GLM v3.9.0 SELF-TEST"); print("="*80)
     rt = GLMRuntimeV37()
 
     tests = []
@@ -149,6 +149,112 @@ def _run_tests():
     syn_ok = mt is not None and "symmetry" in (mt.thesis or "").lower()
     tests.append(("L_synthesis", syn_ok, mt.thesis if mt else None))
     print(f"  meta_thesis={mt.thesis if mt else None}")
+
+    # ── v3.8.0 NEW TESTS ────────────────────────────────────────────────
+
+    # M: Multi-word term preservation (weyl anomaly as atomic token)
+    print("\n[M] Multi-word term preservation (weyl anomaly)")
+    rt.reset_idea()
+    r = rt.chat("What is the weyl anomaly?")
+    weyl_ok = "weyl anomaly" in r.lower()
+    tests.append(("M_multiword", weyl_ok, r[:80] if weyl_ok else r[:80]))
+    print(f"  weyl_anomaly_preserved={weyl_ok}")
+
+    # N: LaTeX scrubbing ($\alpha + \beta$ -> alpha + beta)
+    print("\n[N] LaTeX scrubbing ($\\alpha + \\beta$)")
+    rt.reset_idea()
+    r = rt.chat("What does $\\alpha + \\beta$ mean?")
+    latex_ok = "alpha" in r.lower()
+    tests.append(("N_latex_scrub", latex_ok, r[:80] if latex_ok else r[:80]))
+    print(f"  alpha_extracted={latex_ok}")
+
+    # O: Vector operations (dot product + magnitude)
+    print("\n[O] Vector operations (dot product, magnitude)")
+    rt.reset_idea()
+    r1 = rt.chat("Compute the dot product of <3, -1, 4> and <2, 5, -3>.")
+    dot_ok = "-11" in r1
+    rt.reset_idea()
+    r2 = rt.chat("Find the magnitude of the vector <3, 4, 12>.")
+    mag_ok = "13" in r2
+    tests.append(("O_vector_ops", dot_ok and mag_ok, f"dot={dot_ok}, mag={mag_ok}"))
+    print(f"  dot_product_ok={dot_ok} magnitude_ok={mag_ok}")
+
+    # P: Integrate detector
+    print("\n[P] Integrate detector (integral of x^2 * exp(x))")
+    rt.reset_idea()
+    r = rt.chat("Evaluate the integral of x^2 * exp(x) with respect to x.")
+    int_ok = "(x**2 - 2*x + 2)*exp(x)" in r
+    tests.append(("P_integrate", int_ok, r[:80] if int_ok else r[:80]))
+    print(f"  integral_ok={int_ok}")
+
+    # Q: Simplify detector
+    print("\n[Q] Simplify detector ((x^2-1)/(x-1) -> x+1)")
+    rt.reset_idea()
+    r = rt.chat("Simplify (x^2 - 1)/(x - 1).")
+    simp_ok = "x + 1" in r
+    tests.append(("Q_simplify", simp_ok, r[:80] if simp_ok else r[:80]))
+    print(f"  simplify_ok={simp_ok}")
+
+    # R: Stars and bars (symbolic n, k)
+    print("\n[R] Stars and bars (symbolic n, k)")
+    rt.reset_idea()
+    r = rt.chat("In how many ways can n identical balls be distributed into k distinct boxes such that each box contains at least one ball?")
+    sb_ok = "C(n-1, k-1)" in r or "C(n - 1, k - 1)" in r
+    tests.append(("R_stars_bars", sb_ok, r[:80] if sb_ok else r[:80]))
+    print(f"  stars_bars_ok={sb_ok}")
+
+    # ── v3.9.0 NEW TESTS ────────────────────────────────────────────────
+
+    # S: Linear algebra (determinant)
+    print("\n[S] Linear algebra (determinant)")
+    rt.reset_idea()
+    r = rt.chat("Find the determinant of the matrix [[1, 2, 3], [4, 5, 6], [7, 8, 10]].")
+    det_ok = "-3" in r
+    tests.append(("S_determinant", det_ok, r[:80] if det_ok else r[:80]))
+    print(f"  determinant_ok={det_ok}")
+
+    # T: Multivariable calculus (partial derivative)
+    print("\n[T] Partial derivative (multivariable)")
+    rt.reset_idea()
+    r = rt.chat("Compute the partial derivative of x^2*y + y^3*z with respect to y.")
+    pd_ok = "x**2 + 3*y**2*z" in r
+    tests.append(("T_partial_diff", pd_ok, r[:80] if pd_ok else r[:80]))
+    print(f"  partial_diff_ok={pd_ok}")
+
+    # U: ODE solver
+    print("\n[U] ODE solver (dy/dx = y)")
+    rt.reset_idea()
+    r = rt.chat("Solve the ODE: dy/dx = y.")
+    ode_ok = "C1*exp(x)" in r
+    tests.append(("U_ode", ode_ok, r[:80] if ode_ok else r[:80]))
+    print(f"  ode_ok={ode_ok}")
+
+    # V: Master resource dictionary definition
+    print("\n[V] Master resource definition (oxygen)")
+    rt.reset_idea()
+    r = rt.chat("Define oxygen.")
+    # The master resource has "A colorless, tasteless, odorless, gaseous element..."
+    o2_ok = "colorless" in r.lower() or "tasteless" in r.lower()
+    tests.append(("V_master_def", o2_ok, r[:80] if o2_ok else r[:80]))
+    print(f"  master_def_ok={o2_ok}")
+
+    # W: Natural language explanation (semantic frames)
+    print("\n[W] Natural language explanation (hamiltonian + time)")
+    rt.reset_idea()
+    rt.chat("Tell me about the hamiltonian and time.")
+    nl = rt.explain()
+    nl_ok = "hamiltonian generates time" in nl.lower()
+    tests.append(("W_nl_explain", nl_ok, nl[:80] if nl_ok else nl[:80]))
+    print(f"  nl_explain_ok={nl_ok}")
+
+    # X: Hex colour signature
+    print("\n[X] Hex colour signature (idea_colour)")
+    rt.reset_idea()
+    rt.chat("Tell me about the hamiltonian and time.")
+    sig = rt.idea_colour()
+    colour_ok = sig.get("primary", "").startswith("#") and len(sig.get("primary", "")) == 7
+    tests.append(("X_hex_colour", colour_ok, sig.get("primary")))
+    print(f"  hex_colour_ok={colour_ok} primary={sig.get('primary')}")
 
     # summary
     print("\n" + "="*80); print("SUMMARY"); print("="*80)
