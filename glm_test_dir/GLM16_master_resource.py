@@ -31,14 +31,14 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Set
 
-from GLM00_config import UBP_CORE_PATH
+from GLM00_config import UBP_CORE_PATH, get_master_resource_path
 from GLM01_substrate import (
     WordEntry, BLA, GOLAY_ENGINE, LEECH_ENGINE, _get_mog_category
 )
 
 # ── 1. RESOURCE PATH ──────────────────────────────────────────────────────────
 
-_MASTER_PATH = UBP_CORE_PATH / "glm_master_resource_v1.json"
+_MASTER_PATH = get_master_resource_path()
 
 _master_cache: Optional[dict] = None
 
@@ -49,7 +49,8 @@ def _load_master() -> dict:
     if _master_cache is not None:
         return _master_cache
     try:
-        with open(_MASTER_PATH, 'r') as f:
+        path_to_use = get_master_resource_path()
+        with open(path_to_use, 'r') as f:
             _master_cache = json.load(f)
     except Exception:
         _master_cache = {}

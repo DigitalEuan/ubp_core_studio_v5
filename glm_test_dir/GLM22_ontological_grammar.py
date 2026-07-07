@@ -175,11 +175,21 @@ class OntologicalGrammar:
         return (best_w, best_d) if best_w else None
 
     def construct_sentence(self, subject: str, obj: str,
-                           gap_mode: str = "and") -> Optional[ComputedSentence]:
+                           gap_mode: str = "and",
+                           max_verb_distance: int = 8) -> Optional[ComputedSentence]:
         """Construct a sentence: Subject → Verb → Object.
 
         The verb is COMPUTED from the gap between subject and object.
         No template lookup — pure geometric construction.
+
+        v3.17.0: Added `max_verb_distance` gate. The SESSION_SUMMARY (§4)
+        confirmed `generate_grammatical()` produces word salad because the
+        "nearest VERB" to a noun-pair gap is often Hamming-distance 10+
+        away — the verb is essentially arbitrary within the Q2 cluster.
+        We now return None if `verb_dist > max_verb_distance`, which lets
+        `construct_paragraph` break the chain gracefully instead of emitting
+        garbage. Default 8 (half the codeword distance) is a reasonable
+        cutoff; tune via parameter.
         """
         target = self.vocab.words if hasattr(self.vocab, 'words') else self.vocab
         s_entry = target.get(subject)
@@ -206,6 +216,13 @@ class OntologicalGrammar:
             return None
 
         verb, verb_dist = verb_result
+
+        # v3.17.0: word-salad gate. If the nearest verb is too far from the
+        # gap, the geometric relationship is too weak to support a meaningful
+        # sentence — return None so the paragraph builder stops the chain.
+        if verb_dist > max_verb_distance:
+            return None
+
         v_role = computed_role(verb, self.vocab)
 
         # Construct the surface form
@@ -221,11 +238,23 @@ class OntologicalGrammar:
         )
 
     def construct_paragraph(self, seed: str, n_sentences: int = 3,
-                            gap_mode: str = "and") -> str:
+                            gap_mode: str = "and",
+                            use_crg: bool = True) -> str:
         """Construct a multi-sentence paragraph by chaining computed sentences.
 
         Each sentence's object becomes the next sentence's subject,
         creating a chain of geometric reasoning.
+
+        v3.18.0: Added `use_crg=True` parameter. When True (default), the
+        object for each sentence is chosen from concepts that have a real
+        CRG relationship to the current subject — preferring CRG-reachable
+        nouns over pure Hamming-proximity neighbours. This eliminates the
+        word-salad problem at the source (SESSION_SUMMARY §4): instead of
+        "Time accurately late. Late time ago. Ago ever protactinium.",
+        the paragraph now chains through real physics relationships.
+
+        Falls back to the original Hamming-proximity selection if no CRG
+        edges exist from the current subject.
         """
         if seed not in self._word_data:
             return ""
@@ -235,21 +264,54 @@ class OntologicalGrammar:
         used = {seed}
 
         for _ in range(n_sentences):
-            # Find the nearest NOUN to the current subject that hasn't been used
             s_entry_data = self._word_data.get(current_subject)
             if not s_entry_data:
                 break
             s_hex, _, s_vec = s_entry_data
 
-            # Find nearest unused NOUN as the object
-            best_obj, best_d = None, 999
-            for w, (h, r, _) in self._word_data.items():
-                if r != "NOUN" or w in used:
-                    continue
-                d = fast_hamming(s_hex, h)
-                if 0 < d < best_d:  # 0 means same word
-                    best_d = d
-                    best_obj = w
+            # v3.18.0: Try CRG-reachable nouns first.
+            best_obj = None
+            best_d = 999
+            if use_crg and self.crg:
+                # Look at all CRG edges from current_subject; pick the
+                # nearest NOUN (by Hamming) among the destinations.
+                for edge in self.crg.out.get(current_subject.lower(), []):
+                    if edge.label in ("contradicts", "incompatible_with"):
+                        continue
+                    w = edge.dst
+                    # Look up the entry — note CRG stores lowercase, but
+                    # _word_data may use original case. Try both.
+                    if w in used:
+                        continue
+                    # Find this word in _word_data (case-insensitive)
+                    entry_data = None
+                    if w in self._word_data:
+                        entry_data = self._word_data[w]
+                    else:
+                        for wd, ed in self._word_data.items():
+                            if wd.lower() == w:
+                                entry_data = ed
+                                w = wd  # use the original-case key
+                                break
+                    if not entry_data:
+                        continue
+                    h, r, _ = entry_data
+                    if r != "NOUN":
+                        continue
+                    d = fast_hamming(s_hex, h)
+                    if 0 < d < best_d:
+                        best_d = d
+                        best_obj = w
+
+            # Fall back to pure Hamming-proximity if no CRG noun was found
+            if not best_obj:
+                for w, (h, r, _) in self._word_data.items():
+                    if r != "NOUN" or w in used:
+                        continue
+                    d = fast_hamming(s_hex, h)
+                    if 0 < d < best_d:  # 0 means same word
+                        best_d = d
+                        best_obj = w
             if not best_obj:
                 break
 

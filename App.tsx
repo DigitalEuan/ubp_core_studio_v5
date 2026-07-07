@@ -18,6 +18,7 @@ import { MemoryStatus } from './components/MemoryStatus';
 import { FOMStatus } from './components/FOMStatus';
 import { AIProviderSelector } from './components/AIProviderSelector';
 import { GLMChatInterface } from './components/GLMChatInterface';
+import { GLMConstellation } from './components/GLMConstellation';
 import { marked } from 'marked';
 import { setIndexedDB, getIndexedDB, clearIndexedDB } from './lib/storage';
 
@@ -119,7 +120,7 @@ export const App: React.FC = () => {
   ]);
   const [isGLMChatLoading, setIsGLMChatLoading] = useState(false);
   const [glmConsoleLogs, setGLMConsoleLogs] = useState<ConsoleEntry[]>([]);
-  const [activeGLMOutputTab, setActiveGLMOutputTab] = useState<'console' | 'diagnostics'>('console');
+  const [activeGLMOutputTab, setActiveGLMOutputTab] = useState<'console' | 'diagnostics' | 'visual'>('console');
   const [isGLMExecuting, setIsGLMExecuting] = useState(false);
   const [glmEffortTicks, setGLMEffortTicks] = useState<number>(3);
   const [glmChatMode, setGLMChatMode] = useState<'standard' | 'effort'>('standard');
@@ -165,8 +166,8 @@ export const App: React.FC = () => {
       
       let folderFiles: FileTab[] = [];
       const promises = items.map(async (item: any) => {
-        // Filter out old glm_ prefixed scripts
-        if (item.name.toLowerCase().startsWith('glm_')) {
+        // Filter out old glm_ prefixed scripts, but not the .json resource databases
+        if (item.name.toLowerCase().startsWith('glm_') && !item.name.toLowerCase().endsWith('.json')) {
           return null;
         }
         if (item.type === 'file') {
@@ -276,6 +277,10 @@ export const App: React.FC = () => {
             }
           }
         } else if (item.type === 'dir') {
+          const folderName = item.name.toLowerCase();
+          if (folderName === 'dev' || folderName === 'doc' || folderName === 'tests') {
+            return null;
+          }
           const subFiles = await fetchGLMFolderRecursive(item.path);
           folderFiles = [...folderFiles, ...subFiles];
         }
@@ -507,8 +512,8 @@ if '/home/pyodide' not in sys.path:
 
   // Prune any existing old glm files from state once loaded
   useEffect(() => {
-    if (hasLoadedInitialData && glmFiles.some(f => f.name.toLowerCase().startsWith('glm_'))) {
-      setGLMFiles(prev => prev.filter(f => !f.name.toLowerCase().startsWith('glm_')));
+    if (hasLoadedInitialData && glmFiles.some(f => f.name.toLowerCase().startsWith('glm_') && !f.name.toLowerCase().endsWith('.json'))) {
+      setGLMFiles(prev => prev.filter(f => !(f.name.toLowerCase().startsWith('glm_') && !f.name.toLowerCase().endsWith('.json'))));
     }
   }, [hasLoadedInitialData, glmFiles]);
 
@@ -616,7 +621,7 @@ if '/home/pyodide' not in sys.path:
               }
 
               if (data.glmFiles && data.glmFiles.length > 0) {
-                setGLMFiles(data.glmFiles.filter((f: any) => !f.name.toLowerCase().startsWith('glm_')));
+                setGLMFiles(data.glmFiles.filter((f: any) => !(f.name.toLowerCase().startsWith('glm_') && !f.name.toLowerCase().endsWith('.json'))));
               }
               if (data.currentStudioMode) setCurrentStudioMode(data.currentStudioMode);
               if (data.activeGLMTabId) setActiveGLMTabId(data.activeGLMTabId);
@@ -758,13 +763,53 @@ if '/home/pyodide' not in sys.path:
         });
 
         // Fetch GLM Workspace files on fresh start
-        addConsoleLog('system', 'Fetching GLM Workspace files from GitHub...');
+        addConsoleLog('system', 'Loading GLM Workspace files...');
         try {
-            const fetchedGLM = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+            const localGLMFilesList = [
+                'GLM00_config.py', 'GLM01_substrate.py', 'GLM02_constants.py', 'GLM03_crg.py',
+                'GLM04_number_vocab.py', 'GLM05_idea_evidence.py', 'GLM06_idea_zone.py', 'GLM07_idea_manager.py',
+                'GLM08_idea_meta_graph.py', 'GLM09_tools.py', 'GLM10_response_composer.py', 'GLM11_runtime.py',
+                'GLM12_cli_entry.py', 'GLM13_deliberative_reasoning.py', 'GLM14_lexer.py', 'GLM15_physics_pack.py',
+                'GLM16_master_resource.py', 'GLM17_semantic_frames.py', 'GLM18_hex_colour.py', 'GLM19_prose_composer.py',
+                'GLM20_svd_vocab.py', 'GLM21_generator.py', 'GLM22_ontological_grammar.py', 'GLM23_grammar_vectors.py',
+                'GLM24_continuous_learner.py', 'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py',
+                'GLM28_native_poly.py', 'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py',
+                'test_v319_levelling.py', 'golden_cases.json', 'run_golden_cases.py'
+            ];
+            
+            let fetchedGLM: FileTab[] = [];
+            let loadedLocally = true;
+            
+            for (const filename of localGLMFilesList) {
+                try {
+                    const res = await fetch(`/glm_test_dir/${filename}`);
+                    if (res.ok) {
+                        const content = await res.text();
+                        fetchedGLM.push({
+                            name: filename,
+                            content: content,
+                            type: filename.endsWith('.py') ? 'script' : 'data'
+                        });
+                    } else {
+                        loadedLocally = false;
+                        break;
+                    }
+                } catch (e) {
+                    loadedLocally = false;
+                    break;
+                }
+            }
+            
+            if (!loadedLocally || fetchedGLM.length === 0) {
+                addConsoleLog('system', 'Local GLM files not found. Falling back to fetching from GitHub...');
+                fetchedGLM = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+            } else {
+                addConsoleLog('system', 'Successfully loaded GLM Workspace files from local workspace.');
+            }
+
             if (fetchedGLM.length > 0) {
                 setGLMFiles(fetchedGLM);
                 setActiveGLMTabId(fetchedGLM[0].name);
-                addConsoleLog('system', `Successfully fetched ${fetchedGLM.length} GLM Workspace files.`);
             }
         } catch (e) {
             console.error("Failed to fetch GLM files on startup:", e);
@@ -1169,7 +1214,7 @@ except Exception as e:
       return;
     }
     setGLMStatus('booting');
-    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.7.3...");
+    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.19.0...");
     
     const bootCode = `
 import os
@@ -1199,7 +1244,7 @@ def log_to_js(msg):
 
 # Clear module cache to ensure we load latest file content
 for k in list(sys.modules.keys()):
-    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+    if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
         sys.modules.pop(k, None)
 
 try:
@@ -1219,7 +1264,7 @@ except Exception as e:
       const res = await pyodideService.runPython(bootCode);
       if (res.stdout.includes("SUCCESS")) {
         setGLMStatus('online');
-        addGLMConsoleLog('system', "GLM v3.7.3 loaded successfully and is now ONLINE.");
+        addGLMConsoleLog('system', "GLM v3.19.0 loaded successfully and is now ONLINE.");
         await updateGLMStates();
       } else {
         setGLMStatus('offline');
@@ -1327,7 +1372,7 @@ try:
     if 'glm_rt' not in globals():
         # Clear module cache to ensure we load latest file content
         for k in list(sys.modules.keys()):
-            if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+            if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
                 sys.modules.pop(k, None)
         from GLM11_runtime import GLMRuntimeV37
         globals()['glm_rt'] = GLMRuntimeV37()
@@ -1976,7 +2021,7 @@ finally:
 
               // Restore GLM states if present in the loaded study
               if (data.glmFiles) {
-                  const cleanGlmFiles = data.glmFiles.filter((f: any) => !f.name.toLowerCase().startsWith('glm_'));
+                  const cleanGlmFiles = data.glmFiles.filter((f: any) => !(f.name.toLowerCase().startsWith('glm_') && !f.name.toLowerCase().endsWith('.json')));
                   setGLMFiles(cleanGlmFiles);
                   if (cleanGlmFiles.length > 0) {
                       setActiveGLMTabId(cleanGlmFiles[0].name);
@@ -2389,57 +2434,13 @@ finally:
                </div>
 
                {/* GLM Action Shortcuts */}
-               <div className="grid grid-cols-2 gap-1 p-2 bg-[#120f0c] border-b border-amber-950/20">
+               <div className="p-2 bg-[#120f0c] border-b border-amber-950/20">
                   <button 
                      onClick={bootGLMRuntime} 
                      disabled={glmStatus === 'booting'}
-                     className={`py-1.5 text-[9px] font-bold uppercase rounded border transition-all ${glmStatus === 'online' ? 'bg-green-950/40 text-green-400 border-green-800/40' : 'bg-amber-950/20 text-amber-400 border-amber-900/30 hover:bg-amber-900/30'}`}
+                     className={`w-full py-2 text-xs font-bold uppercase rounded border transition-all ${glmStatus === 'online' ? 'bg-green-950/40 text-green-400 border-green-800/40' : 'bg-amber-950/20 text-amber-400 border-amber-900/30 hover:bg-amber-900/30'}`}
                   >
-                     {glmStatus === 'online' ? '🟢 GLM Ready' : glmStatus === 'booting' ? '⌛ Booting...' : '🔌 Boot GLM'}
-                  </button>
-                  <button 
-                     onClick={async () => {
-                       if (!isPyodideReady) return;
-                       addGLMConsoleLog('system', "Triggering GLM Autonomous Maturation...");
-                       const res = await pyodideService.runPython("globals()['glm_rt'].mature(5); print('Matured 5 ticks.')");
-                       if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
-                       await updateGLMStates();
-                     }}
-                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
-                  >
-                     🧠 Mature Ticks
-                  </button>
-                  <button 
-                     onClick={async () => {
-                       if (!isPyodideReady) return;
-                       addGLMConsoleLog('system', "Triggering Adversarial Stress Test...");
-                       try {
-                          const res = await pyodideService.runPython("print(globals()['glm_rt'].adversarial())");
-                          if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
-                       } catch (e: any) {
-                          addGLMConsoleLog('system', "Adversarial Stress Test was removed in the Modular v3.7 refactor.");
-                       }
-                       await updateGLMStates();
-                     }}
-                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
-                  >
-                     ⚔️ Stress Test
-                  </button>
-                  <button 
-                     onClick={async () => {
-                       if (!isPyodideReady) return;
-                       addGLMConsoleLog('system', "Synthesizing Cross-Zone Meta-Thesis...");
-                       try {
-                          const res = await pyodideService.runPython("print(globals()['glm_rt'].synthesise())");
-                          if (res.stdout) addGLMConsoleLog('stdout', res.stdout);
-                       } catch (e: any) {
-                          addGLMConsoleLog('system', "Cross-Zone Meta-Synthesis was temporarily disabled in Modular v3.7 refactor.");
-                       }
-                       await updateGLMStates();
-                     }}
-                     className="py-1.5 text-[9px] font-bold uppercase rounded bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/30"
-                  >
-                     🌐 Synthesise
+                     {glmStatus === 'online' ? '🟢 GLM Ready & Online' : glmStatus === 'booting' ? '⌛ Booting...' : '🔌 Boot GLM Runtime'}
                   </button>
                </div>
 
@@ -2489,14 +2490,6 @@ finally:
                         title="Execute the 12 built-in self-tests of GLM v3.7.3"
                      >
                         🧪 Self-Tests
-                     </button>
-                     <button 
-                        onClick={runGLMBenchmarks}
-                        disabled={isGLMExecuting}
-                        className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-400 px-2.5 py-1 text-xs font-bold rounded border border-amber-900/30 flex items-center gap-1"
-                        title="Execute the 28 gold-set benchmarks"
-                     >
-                        📊 Benchmarks
                      </button>
                      <button 
                         onClick={async () => {
@@ -2658,6 +2651,7 @@ finally:
                   <div className="flex gap-1 overflow-x-auto scrollbar-none">
                       <button onClick={() => setActiveGLMOutputTab('console')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${activeGLMOutputTab === 'console' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>Console Output</button>
                       <button onClick={() => setActiveGLMOutputTab('diagnostics')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${activeGLMOutputTab === 'diagnostics' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>Live Diagnostics</button>
+                      <button onClick={() => setActiveGLMOutputTab('visual')} className={`px-3 py-1.5 rounded-t text-xs font-bold uppercase tracking-wider ${activeGLMOutputTab === 'visual' ? 'bg-[#1b1511] text-amber-400 border-t-2 border-amber-500' : 'text-gray-500 hover:text-gray-300'}`}>Constellation</button>
                   </div>
                   <div className="flex items-center gap-1.5 pr-1">
                      {activeGLMOutputTab === 'console' && (
@@ -2680,7 +2674,7 @@ finally:
 
                {/* Content area */}
                <div className="flex-1 min-h-0 relative">
-                  {activeGLMOutputTab === 'console' ? (
+                  {activeGLMOutputTab === 'console' && (
                       <div id="glm-console" className="h-full flex flex-col bg-black overflow-hidden relative font-mono text-xs text-amber-400">
                          <div className="flex-1 overflow-y-auto p-3 space-y-1 select-text scrollbar-thin">
                             {glmConsoleLogs.length === 0 ? (
@@ -2702,7 +2696,8 @@ finally:
                             )}
                          </div>
                       </div>
-                  ) : (
+                  )}
+                  {activeGLMOutputTab === 'diagnostics' && (
                       <div id="glm-diagnostics" className="h-full overflow-y-auto p-4 space-y-4 bg-[#0a0806] scrollbar-thin">
                           {/* Active Zone State */}
                           <div className="border border-amber-900/30 bg-amber-950/5 rounded-lg p-3">
@@ -2727,6 +2722,19 @@ finally:
                                 )}
                              </div>
                           </div>
+                      </div>
+                  )}
+                  {activeGLMOutputTab === 'visual' && (
+                      <div id="glm-visual" className="h-full overflow-y-auto p-4 space-y-4 bg-[#0a0806] scrollbar-thin flex flex-col items-center justify-center">
+                          <h4 className="text-sm font-bold uppercase tracking-wider text-amber-500 mb-2 font-mono flex items-center gap-1.5">✨ Concept Constellation Visualization</h4>
+                          
+                          {glmIdeaState ? (
+                              <div className="w-full flex-1 flex flex-col items-center justify-center border border-amber-900/30 bg-black/40 rounded-lg p-4">
+                                  <GLMConstellation stateJson={glmIdeaState} />
+                              </div>
+                          ) : (
+                              <div className="text-gray-600 italic font-mono text-xs">No data to visualize. Fetch idea state first.</div>
+                          )}
                       </div>
                   )}
                </div>

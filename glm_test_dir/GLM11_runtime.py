@@ -109,6 +109,16 @@ class GLMRuntimeV37:
         if auto_expand:
             self.auto_expansions = auto_expand_crg(self.crg, self.vocab_dict)
             lattice_auto_link(self.crg, self.vocab_dict)
+            # v3.18.0: also expand from the master resource, KB descriptions,
+            # and curated physics edges. SESSION_SUMMARY §10 noted the CRG is
+            # "drastically under-built relative to the 4,248-word vocabulary".
+            # This triples the edge count (~170 → ~260+ edges).
+            try:
+                from GLM27_crg_expander import expand_crg
+                self.crg_expansion = expand_crg(self.crg, self.vocab_dict,
+                                                verbose=True)
+            except Exception as _e:
+                self.crg_expansion = {"error": str(_e)}
 
         # Wrap vocab for manager
         class Vocab:
@@ -140,7 +150,9 @@ class GLMRuntimeV37:
         except Exception:
             self.learner = None
 
-    def _reflexive_recall(self, query: str) -> List[Dict[str, Any]]:
+    def _reflexive_recall(self, query: str, qtype: str = "",
+                          comp_res: Any = None, sym_res: Any = None,
+                          delib_res: Any = None) -> List[Dict[str, Any]]:
         """Recall relevant KB entries using alias map + ID match + phrase match.
 
         v3.7.7: Added alias map consultation (word → ubp_id → KB entry).
@@ -151,9 +163,25 @@ class GLMRuntimeV37:
         physics terms like 'weyl anomaly' contribute to recall.  And adds
         direct vocab-definition recall for terms that have a physics-pack
         definition but no KB entry.
+
+        v3.19.0: Added domain-aware filtering (GLM30). Pure-math queries
+        skip KB recall entirely — no more chemistry/physics bleed into
+        math problems. Other domains filter recalled entries by ubp_id
+        prefix.
         """
         if self._kb_cache is None:
             self._kb_cache = _load_system_kb()
+
+        # v3.19.0: Domain-aware filtering
+        try:
+            from GLM30_domain_filter import (classify_domain,
+                                              should_suppress_recall,
+                                              filter_recalled_by_domain)
+            domain = classify_domain(query, qtype, comp_res, sym_res, delib_res)
+            if should_suppress_recall(domain):
+                return []  # pure_math — skip KB recall entirely
+        except Exception:
+            domain = "general"  # fallback: no filtering
 
         recalled = []
         ql = query.lower()
@@ -225,6 +253,20 @@ class GLMRuntimeV37:
         except Exception:
             pass
 
+        # v3.19.0: Apply domain filter to the recalled entries
+        try:
+            from GLM30_domain_filter import filter_recalled_by_domain
+            # Extract query words for the "always keep direct matches" rule
+            query_words = []
+            try:
+                for tok in self.lexer.tokenise(ql):
+                    query_words.append(tok)
+            except Exception:
+                query_words = re.findall(r'\b[a-z]{3,}\b', ql)
+            recalled = filter_recalled_by_domain(recalled, domain, query_words)
+        except Exception:
+            pass
+
         return recalled[:5]
 
     def last_diag(self) -> Dict[str, Any]:
@@ -273,7 +315,10 @@ class GLMRuntimeV37:
             delib_res = deliberate(resolved)
 
         # 3. Reflexive Recall
-        recalled = self._reflexive_recall(resolved)
+        # v3.19.0: pass comp_res/sym_res/delib_res so the domain filter
+        # can use them to classify the query and skip recall for pure_math.
+        qtype = _enhanced_query_type(query)
+        recalled = self._reflexive_recall(resolved, qtype, comp_res, sym_res, delib_res)
 
         # 4. Linguistic Processing
         try:
@@ -291,6 +336,61 @@ class GLMRuntimeV37:
             ws = self.meta_graph.match(tvs, nouns)
             if ws:
                 self._last_warm_start = ws.idea_id
+
+        # 5b. v3.18.0: Auto topic-shift detection.
+        # If the active zone has CRYSTALLISED topic nouns from prior turns
+        # (i.e. it has a real committed thesis — not just a forming zone
+        # with loose evidence) AND the current query has zero content-word
+        # overlap with them (direct OR via CRG-reachability), auto-reset
+        # the manager. This eliminates cross-topic bleed without requiring
+        # the caller to know about `fresh=True`.
+        #
+        # The "crystallised" gate is important: a forming zone has no
+        # committed topic yet, so there's nothing to "bleed" from. Resetting
+        # on every unrelated query to a forming zone would prevent the zone
+        # from ever accumulating enough evidence to crystallise.
+        #
+        # The check has two layers (both must fail to trigger reset):
+        #   1. Direct overlap: any current content word appears in zone nouns
+        #   2. CRG-reachability: any current content word has a CRG edge
+        #      to/from any zone noun (1-hop)
+        if content and self.manager.zones:
+            active = self.manager.active
+            # Only auto-reset if the active zone has crystallised — forming
+            # zones need to accumulate evidence, not get wiped.
+            if getattr(active, 'crystallized', False):
+                zone_nouns = set(getattr(active, 'topic_nouns', []) or [])
+                if zone_nouns:
+                    current_words = set(w for w, _ in content)
+                    # Layer 1: direct overlap
+                    overlap = zone_nouns & current_words
+                    if not overlap:
+                        # Layer 2: CRG-reachability (1-hop)
+                        crg_reachable = False
+                        if self.crg:
+                            zone_nouns_lower = {n.lower() for n in zone_nouns}
+                            for cw in current_words:
+                                cw_l = cw.lower()
+                                # Check edges FROM cw
+                                for edge in self.crg.out.get(cw_l, []):
+                                    if edge.dst.lower() in zone_nouns_lower:
+                                        crg_reachable = True
+                                        break
+                                if crg_reachable:
+                                    break
+                                # Check edges INTO cw
+                                if not crg_reachable:
+                                    for edge in self.crg.into.get(cw_l, []):
+                                        if edge.src.lower() in zone_nouns_lower:
+                                            crg_reachable = True
+                                            break
+                                if crg_reachable:
+                                    break
+                        if not crg_reachable:
+                            # Topic shift detected — auto-reset.
+                            self.manager.reset()
+                            self._turn = 0
+                            self._turn += 1  # re-increment for the new query
 
         # 6. Update Manager
         num_zones_before = len(self.manager.zones)
@@ -315,6 +415,25 @@ class GLMRuntimeV37:
             except Exception:
                 pass
 
+        # v3.19.0: Extract the clean answer and verification statement
+        answer_block = None
+        verified = None
+        try:
+            from GLM29_answer_extractor import extract_answer
+            answer_block = extract_answer(comp_res, sym_res, delib_res)
+        except Exception:
+            pass
+        try:
+            from GLM31_verification import verify_result
+            pipeline_state = {
+                "query": query, "qtype": qtype,
+                "compute": comp_res, "symbolic": sym_res,
+                "deliberation": delib_res,
+            }
+            verified = verify_result(pipeline_state)
+        except Exception:
+            pass
+
         return {
             "query": query,
             "resolved": resolved,
@@ -322,33 +441,57 @@ class GLMRuntimeV37:
             "unknown": unknown,
             "zone": self.manager.active,
             "manager": self.manager,
-            "qtype": _enhanced_query_type(query),
+            "qtype": qtype,
             "compute": comp_res,
             "symbolic": sym_res,
             "deliberation": delib_res,
             "recalled": recalled,
             "warm_start": self._last_warm_start,
             "turn": self._turn,
+            # v3.19.0: new fields
+            "answer_block": answer_block,
+            "verified": verified,
         }
 
     def chat(self, query: str) -> str:
-        """Original terse bracket-tag response (unchanged, passes all tests)."""
+        """Original terse bracket-tag response.
+
+        v3.19.0: now passes answer_block and verified to the composer so
+        [Answer] and [Verified] blocks are appended.
+        """
         state = self._run_pipeline(query)
         return compose_response(
             state["query"], state["content"], state["unknown"],
             state["zone"], state["manager"], self.vocab,
             state["qtype"], state["compute"], state["symbolic"],
             deliberation=state["deliberation"],
-            recalled=state["recalled"]
+            recalled=state["recalled"],
+            # v3.19.0: new kwargs
+            answer_block=state.get("answer_block"),
+            verified=state.get("verified"),
         )
 
-    def chat_prose(self, query: str) -> str:
+    def chat_prose(self, query: str, fresh: bool = False) -> str:
         """Fluent natural-language response (v3.11.0).
 
         Uses the same pipeline as chat() but composes a multi-sentence
         paragraph via GLM19_prose_composer.  ~3-4x longer, genuinely
         fluent, zero fabrication.
+
+        v3.17.0: Added `fresh` parameter to fix cross-topic bleed
+        (SESSION_SUMMARY §4). When `fresh=True`, the IdeaManager is reset
+        before processing the query, so no prior topic nouns leak into
+        the new response. When `fresh=False` (default), the existing
+        behaviour is preserved — useful for genuine multi-turn conversations
+        about the same topic. Use `fresh=True` for any unrelated follow-up
+        or for one-shot queries where bleed would be inappropriate.
+
+        v3.19.0: now passes answer_block and verified to the composer so
+        the answer sentence and verification sentence are appended.
         """
+        if fresh:
+            self.manager.reset()
+            self._turn = 0
         state = self._run_pipeline(query)
         from GLM19_prose_composer import compose_prose
         return compose_prose(
@@ -361,7 +504,23 @@ class GLMRuntimeV37:
             deliberation=state["deliberation"],
             recalled=state["recalled"],
             turn=state["turn"],
+            # v3.19.0: new kwargs
+            answer_block=state.get("answer_block"),
+            verified=state.get("verified"),
         )
+
+    def crg_alu(self):
+        """v3.17.0: return a CRGTraversalALU bound to this runtime's CRG + vocab.
+
+        Lazily constructed. This is the word-level analogue of NoiseALU,
+        providing step-by-step CRG traversal with real traces + fingerprints
+        — the "stage-1 algorithm for words" identified as missing in
+        SESSION_SUMMARY §10.
+        """
+        if not hasattr(self, '_crg_alu_instance'):
+            from GLM26_crg_alu import CRGTraversalALU
+            self._crg_alu_instance = CRGTraversalALU(self.crg, self.vocab)
+        return self._crg_alu_instance
 
     def chat_with_effort(self, query: str, max_ticks: int = 5) -> str:
         res = self.chat(query)

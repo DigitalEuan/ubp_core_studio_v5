@@ -239,10 +239,20 @@ def _fmt_symbolic(result: Dict, turn: int, query: str) -> str:
 
 
 def _fmt_deliberation(result: Dict, turn: int, query: str) -> str:
-    """Format a deliberation result as prose."""
+    """Format a deliberation result as prose.
+
+    v3.19.0: FIXED BUG — the original version only surfaced `trace` and
+    dropped `result["answer"]` entirely. Now includes the answer at the
+    end of the sentence so the user sees the actual conclusion.
+    """
     trace = " → ".join(result.get("trace", []))
+    answer = result.get("answer", "")
     template = _pick(_DELIBERATES, turn, query)
-    return template.format(trace=trace)
+    s = template.format(trace=trace)
+    # v3.19.0: append the answer if present
+    if answer:
+        s += f" The conclusion is: {answer}."
+    return s
 
 
 # ── 3. MASTER PROSE COMPOSER ─────────────────────────────────────────────────
@@ -261,6 +271,9 @@ def compose_prose(
     deliberation: Optional[Dict] = None,
     recalled: Optional[List[Dict]] = None,
     turn: int = 0,
+    # v3.19.0: new kwargs for answer extraction + verification
+    answer_block: Optional[Any] = None,
+    verified: Optional[str] = None,
 ) -> str:
     """Compose a fluent multi-sentence response from pipeline state.
 
@@ -360,7 +373,28 @@ def compose_prose(
         gap_template = _pick(_GAPS, turn, query)
         sentences.append(gap_template.format(gaps=', '.join(real_gaps[:3])))
 
-    # ── L. Fallback ───────────────────────────────────────────────────────
+    # ── L. v3.19.0: Clean Answer sentence ─────────────────────────────────
+    # Append the extracted answer as a clear final sentence.
+    if answer_block is not None:
+        try:
+            from GLM29_answer_extractor import format_answer_prose
+            ans_sentence = format_answer_prose(answer_block)
+            if ans_sentence:
+                sentences.append(ans_sentence)
+        except Exception:
+            pass
+
+    # ── M. v3.19.0: Verification sentence ─────────────────────────────────
+    if verified is not None:
+        try:
+            from GLM31_verification import format_verified_prose
+            ver_sentence = format_verified_prose(verified)
+            if ver_sentence:
+                sentences.append(ver_sentence)
+        except Exception:
+            pass
+
+    # ── N. Fallback ───────────────────────────────────────────────────────
     if not sentences:
         return "I am listening. Name a concept or provide a mathematical expression to begin."
 

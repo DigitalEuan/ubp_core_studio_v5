@@ -43,6 +43,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 from __future__ import annotations
 import json, re, hashlib, os
+import atexit
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
 from collections import defaultdict, Counter
@@ -57,6 +58,7 @@ from GLM01_substrate import (
 from GLM22_ontological_grammar import dominant_quadrant, QUADRANT_RANGES, GRAMMAR_ROLE
 from GLM23_grammar_vectors import (
     ROLE_TO_QUADRANT, infer_role, snap_to_golay_preserving_quadrant,
+    QUADRANT_FORCING_ENABLED,
 )
 
 # ── 1. LEARNED STATE ─────────────────────────────────────────────────────────
@@ -134,6 +136,54 @@ class ContinuousLearner:
         self.refine_threshold = 5
         # Load learned words into vocab
         self._load_learned_words()
+        # v3.17.0 BUG FIX (b): re-apply learned CRG edges to the live graph.
+        # Previously these were saved to disk but never re-added on reload —
+        # the same bug class as the already-patched vectors-counter issue.
+        self._load_learned_edges()
+        # v3.17.0 BUG FIX (c): register an atexit handler so the state is
+        # flushed even if the process exits between periodic saves. The
+        # original code only saved at `query_count % 5 == 0`, silently
+        # losing up to 4 queries of real learning per session.
+        atexit.register(self._atexit_flush)
+
+    def _atexit_flush(self):
+        """Flush learned state on interpreter exit (v3.17.0 bug c fix)."""
+        try:
+            self.state.save()
+        except Exception:
+            pass
+
+    def _load_learned_edges(self):
+        """v3.17.0 BUG FIX (b): re-apply learned CRG edges on reload.
+
+        Previously `learned_edges` were saved to disk but never re-added to
+        the live CRG graph after a restart, so they accumulated as dead data.
+        This method iterates the persisted edges and calls `crg.add_edge`
+        for each, skipping any that already exist.
+
+        v3.17.0 also fixes a deeper issue: the original `_check_for_new_edges`
+        called `crg.add_edge(..., "co_occurs", ...)` but `co_occurs` was not
+        in `EDGE_LABELS`, so the call silently returned False. The fix is in
+        GLM01_substrate (added "co_occurs" to EDGE_LABELS). We additionally
+        check the return value here so we don't count a "added" edge that
+        was actually rejected.
+        """
+        added = 0
+        for src, label, dst in self.state.learned_edges:
+            # ConceptRelationGraph.add_edge lowercases keys, so use lowercase
+            # for the existence check too.
+            src_l, dst_l = src.lower().strip(), dst.lower().strip()
+            existing = any(e.dst == dst_l and e.label == label
+                           for e in self.crg.out.get(src_l, []))
+            if not existing:
+                try:
+                    ok = self.crg.add_edge(src, label, dst)
+                    if ok:
+                        added += 1
+                except Exception:
+                    pass
+        if added > 0:
+            print(f"[GLM24] Re-applied {added} learned CRG edges from saved state")
 
     def _load_learned_words(self):
         """Load previously-learned words into the vocab."""
@@ -185,10 +235,19 @@ class ContinuousLearner:
         # 5. Save state periodically
         if self.state.query_count % 5 == 0:
             self.state.save()
+        # v3.17.0 BUG FIX (c): also flush after a refinement pass actually
+        # changed vectors — don't wait for the next 5-query boundary.
 
     def _learn_new_word(self, word: str, context_words: List[str]):
-        """Learn a new word by deriving its vector from co-occurrence."""
-        # Infer grammatical role from suffix
+        """Learn a new word by deriving its vector from co-occurrence.
+
+        v3.17.0: quadrant-forcing is now opt-in via QUADRANT_FORCING_ENABLED.
+        When disabled (the default), the vector is derived purely from the
+        average of context-word vectors, median-thresholded, and snapped to
+        the nearest Golay codeword with NO quadrant restriction. This is
+        the "comparatively benign" path that retains ~75% of the signal.
+        """
+        # Infer grammatical role from suffix (kept as metadata only)
         role = infer_role(word, "")
 
         # Find co-occurring known words
@@ -216,45 +275,48 @@ class ContinuousLearner:
         median = sorted(avg_vec)[12]  # median threshold
         bit_vec = [1 if v > median else 0 for v in avg_vec]
 
-        # Force the dominant quadrant to match the grammatical role
-        target_q = ROLE_TO_QUADRANT.get(role, 0)
-        q_start, q_end = QUADRANT_RANGES[target_q]
-        # Set 3 bits in the target quadrant
-        q_vals = avg_vec[q_start:q_end]
-        top3 = sorted(range(6), key=lambda i: q_vals[i], reverse=True)[:3]
-        for i in range(6):
-            bit_vec[q_start + i] = 1 if i in top3 else 0
-
-        # Ensure weight in [6, 18]
-        w = sum(bit_vec)
-        if w < 6:
+        if QUADRANT_FORCING_ENABLED:
+            # Legacy v3.15 path — force dominant quadrant to match role.
+            target_q = ROLE_TO_QUADRANT.get(role, 0)
+            q_start, q_end = QUADRANT_RANGES[target_q]
+            q_vals = avg_vec[q_start:q_end]
+            top3 = sorted(range(6), key=lambda i: q_vals[i], reverse=True)[:3]
             for i in range(6):
-                if bit_vec[q_start + i] == 0:
-                    bit_vec[q_start + i] = 1
-                    w += 1
-                    if w >= 6:
-                        break
+                bit_vec[q_start + i] = 1 if i in top3 else 0
+            # Ensure weight in [6, 18]
+            w = sum(bit_vec)
+            if w < 6:
+                for i in range(6):
+                    if bit_vec[q_start + i] == 0:
+                        bit_vec[q_start + i] = 1
+                        w += 1
+                        if w >= 6:
+                            break
 
-        # Snap to Golay codeword (quadrant-preserving)
-        snapped, meta = GOLAY_ENGINE.snap_to_codeword(bit_vec)
-        # Verify quadrant preserved
-        sn_q = dominant_quadrant(snapped)
-        if sn_q != target_q:
-            # Search for nearest codeword with correct quadrant
-            from ubp_unified_v5 import GOLAY_ENGINE as real_golay
-            all_cws = real_golay.get_all_codewords()
-            vec_hex = vector_to_hex_int(bit_vec)
-            best_d, best_cw = 999, snapped
-            for cw in all_cws:
-                cw_weights = [sum(cw[s:e]) for s, e in QUADRANT_RANGES]
-                if cw_weights.index(max(cw_weights)) != target_q:
-                    continue
-                cw_hex = vector_to_hex_int(cw)
-                d = bin(int(vec_hex ^ cw_hex)).count('1')
-                if d < best_d:
-                    best_d = d
-                    best_cw = list(cw)
-            snapped = best_cw
+        # Snap to Golay codeword. v3.17.0: plain snap by default (no
+        # quadrant restriction). Legacy path uses the quadrant-preserving
+        # search when forcing is enabled.
+        if QUADRANT_FORCING_ENABLED:
+            target_q = ROLE_TO_QUADRANT.get(role, 0)
+            snapped, meta = GOLAY_ENGINE.snap_to_codeword(bit_vec)
+            if dominant_quadrant(snapped) != target_q:
+                from ubp_unified_v5 import GOLAY_ENGINE as real_golay
+                all_cws = real_golay.get_all_codewords()
+                vec_hex = vector_to_hex_int(bit_vec)
+                best_d, best_cw = 999, snapped
+                for cw in all_cws:
+                    cw_weights = [sum(cw[s:e]) for s, e in QUADRANT_RANGES]
+                    if cw_weights.index(max(cw_weights)) != target_q:
+                        continue
+                    cw_hex = vector_to_hex_int(cw)
+                    d = bin(int(vec_hex ^ cw_hex)).count('1')
+                    if d < best_d:
+                        best_d = d
+                        best_cw = list(cw)
+                snapped = best_cw
+        else:
+            # v3.17 default: plain snap, no quadrant restriction.
+            snapped, meta = GOLAY_ENGINE.snap_to_codeword(bit_vec)
 
         # Add to vocab
         nrci = float(LEECH_ENGINE.calculate_nrci(snapped))
@@ -281,6 +343,19 @@ class ContinuousLearner:
 
         For each word with significant co-occurrence changes, recompute
         its vector using the updated co-occurrence profile.
+
+        v3.17.0 changes:
+          - BUG (a) FIX: the prefix-skip was excluding every word with an
+            ELEM_/LAW_/PARTICLE_/MOLECULE_/MATH_/PVE_ prefix from refinement.
+            The intent was to protect hand-curated KB entries, but the proxy
+            was too broad — it also froze priority-vocab and master-resource
+            words that DO need refinement. Now we only skip words whose
+            vector is already a *valid Golay codeword* AND was hand-curated
+            (i.e. has `golay_codeword` set and matches its `vector`). Words
+            whose vector equals their golay_codeword are immutable by design.
+          - Quadrant-forcing is now opt-in via QUADRANT_FORCING_ENABLED.
+          - BUG (c) FIX: state is now saved after refinement if any vectors
+            changed, not just on the 5-query boundary.
         """
         target = self.vocab.words if hasattr(self.vocab, 'words') else self.vocab
         refined = 0
@@ -295,10 +370,27 @@ class ContinuousLearner:
             entry = target[word]
             if not hasattr(entry, 'vector') or not entry.vector:
                 continue
-            # Don't refine KB or physics-pack entries
+
+            # v3.17.0 BUG (a) FIX: replace the broad prefix-skip with a
+            # precise check. We only skip words that are (1) hand-curated
+            # AND (2) whose vector is already a valid Golay codeword.
+            # Hand-curated = ubp_id starts with one of the protected prefixes
+            # AND the entry's golay_codeword field is non-empty and equal
+            # to its current vector.
             ubp_id = getattr(entry, 'ubp_id', '')
-            if ubp_id.startswith(('ELEM_', 'LAW_', 'PARTICLE_', 'MOLECULE_', 'MATH_', 'PVE_')):
+            is_protected_prefix = ubp_id.startswith(
+                ('ELEM_', 'LAW_', 'PARTICLE_', 'MOLECULE_', 'MATH_'))
+            gc = getattr(entry, 'golay_codeword', [])
+            is_hand_curated_codeword = (
+                is_protected_prefix and
+                bool(gc) and
+                list(gc) == list(entry.vector)
+            )
+            if is_hand_curated_codeword:
                 continue
+            # Physics-pack entries (PVE_) are no longer blanket-skipped —
+                # they CAN be refined if their co-occurrence profile shifts.
+                # Only the truly hand-curated codewords (above) are frozen.
 
             # Recompute vector: blend current vector with co-occurrence partners
             current_vec = list(entry.vector)
@@ -319,55 +411,57 @@ class ContinuousLearner:
             median = sorted(avg)[12]
             new_vec = [1 if v > median else 0 for v in avg]
 
-            # Preserve grammatical quadrant
-            role = getattr(entry, 'role', 'NOUN')
-            target_q = ROLE_TO_QUADRANT.get(role, 0)
-            q_start, q_end = QUADRANT_RANGES[target_q]
-            q_vals = avg[q_start:q_end]
-            top3 = sorted(range(6), key=lambda i: q_vals[i], reverse=True)[:3]
-            for i in range(6):
-                new_vec[q_start + i] = 1 if i in top3 else 0
-
-            # Ensure weight
-            w = sum(new_vec)
-            if w < 6:
+            if QUADRANT_FORCING_ENABLED:
+                # Legacy v3.15 path — preserve grammatical quadrant.
+                role = getattr(entry, 'role', 'NOUN')
+                target_q = ROLE_TO_QUADRANT.get(role, 0)
+                q_start, q_end = QUADRANT_RANGES[target_q]
+                q_vals = avg[q_start:q_end]
+                top3 = sorted(range(6), key=lambda i: q_vals[i], reverse=True)[:3]
                 for i in range(6):
-                    if new_vec[q_start + i] == 0:
-                        new_vec[q_start + i] = 1
-                        w += 1
-                        if w >= 6:
-                            break
-            elif w > 18:
-                for q in range(4):
-                    if q == target_q:
-                        continue
-                    qs, qe = QUADRANT_RANGES[q]
+                    new_vec[q_start + i] = 1 if i in top3 else 0
+                # Ensure weight
+                w = sum(new_vec)
+                if w < 6:
                     for i in range(6):
-                        if new_vec[qs + i] == 1:
-                            new_vec[qs + i] = 0
-                            w -= 1
-                            if w <= 18:
+                        if new_vec[q_start + i] == 0:
+                            new_vec[q_start + i] = 1
+                            w += 1
+                            if w >= 6:
                                 break
-                    if w <= 18:
-                        break
-
-            # Snap to Golay codeword (quadrant-preserving)
-            snapped, meta = GOLAY_ENGINE.snap_to_codeword(new_vec)
-            if dominant_quadrant(snapped) != target_q:
-                from ubp_unified_v5 import GOLAY_ENGINE as real_golay
-                all_cws = real_golay.get_all_codewords()
-                vec_hex = vector_to_hex_int(new_vec)
-                best_d, best_cw = 999, snapped
-                for cw in all_cws:
-                    cw_weights = [sum(cw[s:e]) for s, e in QUADRANT_RANGES]
-                    if cw_weights.index(max(cw_weights)) != target_q:
-                        continue
-                    cw_hex = vector_to_hex_int(cw)
-                    d = bin(int(vec_hex ^ cw_hex)).count('1')
-                    if d < best_d:
-                        best_d = d
-                        best_cw = list(cw)
-                snapped = best_cw
+                elif w > 18:
+                    for q in range(4):
+                        if q == target_q:
+                            continue
+                        qs, qe = QUADRANT_RANGES[q]
+                        for i in range(6):
+                            if new_vec[qs + i] == 1:
+                                new_vec[qs + i] = 0
+                                w -= 1
+                                if w <= 18:
+                                    break
+                        if w <= 18:
+                            break
+                # Snap to Golay codeword (quadrant-preserving)
+                snapped, meta = GOLAY_ENGINE.snap_to_codeword(new_vec)
+                if dominant_quadrant(snapped) != target_q:
+                    from ubp_unified_v5 import GOLAY_ENGINE as real_golay
+                    all_cws = real_golay.get_all_codewords()
+                    vec_hex = vector_to_hex_int(new_vec)
+                    best_d, best_cw = 999, snapped
+                    for cw in all_cws:
+                        cw_weights = [sum(cw[s:e]) for s, e in QUADRANT_RANGES]
+                        if cw_weights.index(max(cw_weights)) != target_q:
+                            continue
+                        cw_hex = vector_to_hex_int(cw)
+                        d = bin(int(vec_hex ^ cw_hex)).count('1')
+                        if d < best_d:
+                            best_d = d
+                            best_cw = list(cw)
+                    snapped = best_cw
+            else:
+                # v3.17 default: plain Golay snap, no quadrant restriction.
+                snapped, meta = GOLAY_ENGINE.snap_to_codeword(new_vec)
 
             # Update if the vector changed
             if snapped != current_vec:
@@ -380,6 +474,10 @@ class ContinuousLearner:
         if refined > 0:
             self.state.vectors_refined += refined
             print(f"[GLM24] Refined {refined} vectors from co-occurrence data")
+            # v3.17.0 BUG (c) FIX: flush immediately when vectors changed,
+            # so learning isn't lost if the process exits before the next
+            # 5-query boundary.
+            self.state.save()
 
     def _check_for_new_edges(self, content_words: List[str]):
         """Check if any word pairs should get a new CRG edge."""

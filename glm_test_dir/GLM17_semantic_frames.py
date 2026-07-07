@@ -1,6 +1,7 @@
 # ==============================================================================
 # §17  SEMANTIC FRAMES — NATURAL LANGUAGE GENERATION (v3.9.0 NEW MODULE)
 # ==============================================================================
+# Should be replaced by 'GLM22_ontological_grammar'
 # Adapted from core/glm_semantic_frames.py.  Gives GLM the ability to
 # compose natural-language explanations from CRG edges and zone state,
 # rather than only emitting "[KB] X: ..." or "[Backbone] a | b" tags.

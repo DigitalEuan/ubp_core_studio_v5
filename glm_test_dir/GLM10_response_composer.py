@@ -142,7 +142,10 @@ def compose_response(
     symbolic_result: Optional[Dict] = None, 
     warm_start: Optional[Any] = None,
     deliberation: Optional[Dict] = None,
-    recalled: Optional[List[Dict[str, Any]]] = None # <--- ADDED
+    recalled: Optional[List[Dict[str, Any]]] = None, # <--- ADDED
+    # v3.19.0: new kwargs for answer extraction + verification
+    answer_block: Optional[Any] = None,
+    verified: Optional[str] = None,
 ) -> str:
     """Weaves internal state into a coherent multi-layered response."""
     
@@ -209,7 +212,9 @@ def compose_response(
     if topic_word:
         desc, nrci, tax = _kb_description(topic_word, vocab, kb)
         if desc: parts.append(f"[KB] {desc}")
-        parts.append(f"[Verify] NRCI={nrci:.3f} | Tax={tax:.2f}")
+        # v3.19.0: renamed [Verify] to [Metrics] to avoid confusion with
+        # the new [Verified] answer-verification tag below.
+        parts.append(f"[Metrics] NRCI={nrci:.3f} | Tax={tax:.2f}")
 
     # I. Structural Backbone
     if zone is not None and hasattr(zone, 'crg_backbone') and zone.crg_backbone:
@@ -233,6 +238,26 @@ def compose_response(
     real_gaps = [u for u in unknown if u.lower() not in {"hello", "hi", "help"}]
     if real_gaps:
         parts.append(f"[Gap] No verified vector for: {', '.join(real_gaps[:3])}")
+
+    # v3.19.0: [Answer] block — clean extracted answer, always last (before fallback)
+    if answer_block is not None:
+        try:
+            from GLM29_answer_extractor import format_answer_terse
+            ans_str = format_answer_terse(answer_block)
+            if ans_str:
+                parts.append(ans_str)
+        except Exception:
+            pass
+
+    # v3.19.0: [Verified] block — explicit verification statement
+    if verified is not None:
+        try:
+            from GLM31_verification import format_verified_terse
+            ver_str = format_verified_terse(verified)
+            if ver_str:
+                parts.append(ver_str)
+        except Exception:
+            pass
 
     # K. Fallback
     if not parts:

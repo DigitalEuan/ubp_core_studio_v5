@@ -131,8 +131,8 @@ ${this.truncateFileContent(f.content, 60000)}
     fileContext += "\n=== GLM FILES (GLM WORKSPACE TAB) ===\n";
     if (validGlmFiles.length > 0) {
       fileContext += validGlmFiles.slice(-40).map(f => {
-        if (f.name === 'glm_unified_resource.json') {
-          return `\n--- START FILE: ${f.name} (Type: ${f.type}) ---\n[CONTENT OMITTED: 14.4MB JSON database. Access this file via Python using json.load(open('glm_unified_resource.json'))]\n--- END FILE: ${f.name} ---\n`;
+        if (f.name === 'glm_unified_resource.json' || f.name === 'glm_master_resource_v1.json') {
+          return `\n--- START FILE: ${f.name} (Type: ${f.type}) ---\n[CONTENT OMITTED: 14.4MB JSON database. Access this file via Python using json.load(open('${f.name}'))]\n--- END FILE: ${f.name} ---\n`;
         }
         return `\n--- START FILE: ${f.name} (Type: ${f.type}) ---\n${this.truncateFileContent(f.content, 60000)}\n--- END FILE: ${f.name} ---\n`;
       }).join('\n');

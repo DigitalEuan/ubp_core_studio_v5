@@ -192,6 +192,12 @@ EDGE_LABELS: Set[str] = {
     "lattice_adjacent", "lattice_adjacent_1", "lattice_adjacent_2",
     "lattice_adjacent_3", "lattice_adjacent_4", "lattice_adjacent_5",
     "auto_proposed", "contradicts", "incompatible_with",
+    # v3.17.0: added "co_occurs" so ContinuousLearner's _check_for_new_edges
+    # and _load_learned_edges can actually add/re-apply learned edges. The
+    # original code called crg.add_edge(..., "co_occurs", ...) but the label
+    # was silently rejected, so learned CRG edges were never added to the
+    # live graph — a fourth bug beyond the three in SESSION_SUMMARY §5.
+    "co_occurs",
 }
 
 @dataclass

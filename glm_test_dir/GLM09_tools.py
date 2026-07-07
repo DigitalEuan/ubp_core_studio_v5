@@ -25,6 +25,38 @@ try:
 except ImportError:
     _HAS_SYMPY = False
 
+# v3.17.0: Native ALU adapter (GLM25). When available, every numeric
+# computation routes through NoiseALU / ExactMath / LinearAlgebraALU and
+# returns a real trace + fingerprint. SymPy is demoted to validation only.
+try:
+    from GLM25_native_alu import native_compute, symbolic_with_fingerprint, _HAS_NATIVE
+    if _HAS_NATIVE:
+        # Quick smoke test that the ALU is actually usable at import time
+        try:
+            _smoke = native_compute("gcd", (6, 4), validate=False)
+            _NATIVE_OK = bool(_smoke.fingerprint)
+        except Exception:
+            _NATIVE_OK = False
+    else:
+        _NATIVE_OK = False
+except Exception:
+    _HAS_NATIVE = False
+    _NATIVE_OK = False
+
+# v3.18.0: Native polynomial ALU (GLM28). Used to handle differentiation
+# and integration of polynomials natively (no SymPy). Falls back to SymPy
+# for non-polynomial expressions (sin, cos, exp, log, etc.).
+try:
+    from GLM28_native_poly import (native_polynomial_diff, native_polynomial_integrate,
+                                    is_polynomial as _is_polynomial,
+                                    _HAS_NATIVE as _HAS_NATIVE_POLY_MOD)
+    if _HAS_NATIVE_POLY_MOD:
+        _POLY_OK = True
+    else:
+        _POLY_OK = False
+except Exception:
+    _POLY_OK = False
+
 # IMPORT NUMBER WORDS FOR GROUNDING
 from GLM04_number_vocab import NUMBER_WORDS
 
@@ -325,127 +357,295 @@ def detect_compute(query: str) -> Optional[Dict[str, Any]]:
     return None
 
 def evaluate_numeric(comp: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluates a detected numeric computation."""
+    """Evaluates a detected numeric computation.
+
+    v3.17.0: NATIVE-FIRST. Routes through GLM25's `native_compute` so every
+    operation runs on the real UBP engines (NoiseALU / ExactMath /
+    LinearAlgebraALU / PhysicsALU) and produces a real trace + fingerprint.
+    SymPy is used only as a cross-check (attached as `sympy_check`).
+
+    The return shape preserves the v3.8.0 contract:
+        {value, exact, approx}
+    New v3.17.0 keys (additive, optional):
+        trace, fingerprint, sympy_check, elapsed_us, native
+    Existing callers that only read {value, exact, approx} keep working.
+    """
     kind = comp.get("kind")
 
-    # v3.9.0: Linear algebra — determinant, eigenvalues, trace
+    # ── Linear algebra: determinant, eigenvalues, trace ──────────────────
     if kind in ("determinant", "eigenvalues", "trace"):
         matrix_str = comp.get("matrix_str", "")
+        # Parse the matrix string into a 2D list of numbers (using SymPy's
+        # parser if available — this is parsing, not computation).
+        if _HAS_SYMPY:
+            try:
+                m = sp.Matrix(sp.sympify(matrix_str))
+                mat = [[float(m[i, j]) for j in range(m.cols)] for i in range(m.rows)]
+            except Exception as e:
+                return {"value": None, "error": str(e), "exact": "Error", "approx": 0.0}
+        else:
+            return {"value": None, "error": "SymPy required to parse matrix", "exact": "N/A", "approx": 0.0}
+
+        # v3.17.0: route through native ALU where possible.
+        if _NATIVE_OK:
+            try:
+                if kind == "determinant":
+                    n = len(mat)
+                    if n == 2:
+                        r = native_compute("det_2x2", (mat,), validate=True)
+                    elif n == 3:
+                        r = native_compute("det_3x3", (mat,), validate=True)
+                    else:
+                        r = native_compute("det_nxn", (mat,), validate=True)
+                    return _wrap_native(r)
+                elif kind == "trace":
+                    r = native_compute("matrix_trace", (mat,), validate=True)
+                    return _wrap_native(r)
+                elif kind == "eigenvalues":
+                    # No native eigenvalue solver — SymPy is the only path.
+                    # We still fingerprint the result via symbolic_with_fingerprint.
+                    sm = sp.Matrix(mat)
+                    eigs = sm.eigenvals()
+                    out = {str(ev): int(mult) for ev, mult in eigs.items()}
+                    # Light fingerprint of the eigenvalue count + modulus sum
+                    try:
+                        from GLM25_native_alu import _fingerprint_of
+                        fp_input = sum(hash(ev) for ev in eigs.keys())
+                        fp = _fingerprint_of(fp_input)
+                    except Exception:
+                        fp = {}
+                    return {"value": out, "exact": str(out), "approx": 0.0,
+                            "trace": [f"[NON-NATIVE] SymPy eigenvals({mat})"],
+                            "fingerprint": fp,
+                            "native": False}
+            except Exception as e:
+                # Fall through to legacy SymPy path
+                pass
+
+        # Legacy fallback (also used when _NATIVE_OK is False)
         if _HAS_SYMPY:
             try:
                 m = sp.Matrix(sp.sympify(matrix_str))
                 if kind == "determinant":
                     val = m.det()
-                    return {"value": val, "exact": str(val), "approx": float(val) if val.is_number else 0.0}
+                    return {"value": val, "exact": str(val),
+                            "approx": float(val) if val.is_number else 0.0,
+                            "native": False}
                 elif kind == "eigenvalues":
                     eigs = m.eigenvals()
-                    # SymPy returns {value: multiplicity}
-                    out = {}
-                    for ev, mult in eigs.items():
-                        out[str(ev)] = int(mult)
-                    return {"value": out, "exact": str(out), "approx": 0.0}
+                    out = {str(ev): int(mult) for ev, mult in eigs.items()}
+                    return {"value": out, "exact": str(out), "approx": 0.0,
+                            "native": False}
                 elif kind == "trace":
                     val = m.trace()
-                    return {"value": val, "exact": str(val), "approx": float(val) if val.is_number else 0.0}
+                    return {"value": val, "exact": str(val),
+                            "approx": float(val) if val.is_number else 0.0,
+                            "native": False}
             except Exception as e:
                 return {"value": None, "error": str(e), "exact": "Error", "approx": 0.0}
         return {"value": None, "error": "SymPy required for linear algebra", "exact": "N/A", "approx": 0.0}
 
-    # v3.8.0: Vector operations
+    # ── Vector operations ────────────────────────────────────────────────
     if kind == "dot_product":
         v1, v2 = comp["operands"]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("dot_product", (v1, v2), validate=False)
+                return _wrap_native(r)
+            except Exception:
+                pass
         val = sum(a * b for a, b in zip(v1, v2))
-        # Try to keep integers as integers if all components were integers
         if all(a == int(a) for a in v1 + v2) and val == int(val):
             val = int(val)
-        return {"value": val, "exact": str(val), "approx": float(val)}
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
     if kind == "cross_product":
         v1, v2 = comp["operands"]
-        # a x b = (a2*b3 - a3*b2, a3*b1 - a1*b3, a1*b2 - a2*b1)
+        if _NATIVE_OK:
+            try:
+                r = native_compute("cross_product", (v1, v2), validate=False)
+                return _wrap_native(r)
+            except Exception:
+                pass
         cx = v1[1]*v2[2] - v1[2]*v2[1]
         cy = v1[2]*v2[0] - v1[0]*v2[2]
         cz = v1[0]*v2[1] - v1[1]*v2[0]
         val = [cx, cy, cz]
-        # Integer-ify if possible
         if all(c == int(c) for c in val):
             val = [int(c) for c in val]
-        return {"value": val, "exact": str(val), "approx": float(sum(c*c for c in val)**0.5)}
+        return {"value": val, "exact": str(val), "approx": float(sum(c*c for c in val)**0.5), "native": False}
     if kind == "magnitude":
         v = comp["operands"][0]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("vector_magnitude", (v,), validate=False)
+                return _wrap_native(r)
+            except Exception:
+                pass
         val = math.sqrt(sum(c*c for c in v))
-        # Integer-ify if it's a perfect square root
         val_int = round(val)
         if abs(val - val_int) < 1e-9 and val_int*val_int == sum(int(round(c*c)) for c in v):
-            # Check if it's truly an integer magnitude (e.g. <3,4,12> -> 13)
             sum_sq = sum(c*c for c in v)
             if all(c == int(c) for c in v):
                 sum_sq_int = int(sum(round(c*c) for c in v))
                 root = int(math.isqrt(sum_sq_int))
                 if root*root == sum_sq_int:
-                    return {"value": root, "exact": str(root), "approx": float(root)}
-        return {"value": val, "exact": str(val), "approx": float(val)}
+                    return {"value": root, "exact": str(root), "approx": float(root), "native": False}
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
-    # v3.7.7: Primality check (handled specially — returns True/False, not a number)
+    # ── Primality — native substrate check ───────────────────────────────
     if kind == "prime":
         n = comp["operands"][0]
         if n < 2:
-            return {"value": False, "exact": "False", "approx": 0.0}
+            return {"value": False, "exact": "False", "approx": 0.0, "native": False}
+        if _NATIVE_OK:
+            try:
+                r = native_compute("is_prime", (n,), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
         for i in range(2, int(math.sqrt(n)) + 1):
             if n % i == 0:
-                return {"value": False, "exact": "False", "approx": 0.0}
-        return {"value": True, "exact": "True", "approx": 1.0}
+                return {"value": False, "exact": "False", "approx": 0.0, "native": False}
+        return {"value": True, "exact": "True", "approx": 1.0, "native": False}
 
-    # v3.7.7: Combination
+    # ── Combination / factorial / lcm / gcd / sqrt / power / arith ───────
     if kind == "combination":
         n, k = comp["operands"]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("combination", (n, k), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
         if _HAS_SYMPY:
             val = sp.binomial(n, k)
         else:
             val = math.comb(n, k) if hasattr(math, 'comb') else 0
-        return {"value": val, "exact": str(val), "approx": float(val)}
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
-    # v3.7.7: Factorial
     if kind == "factorial":
         n = comp["operands"][0]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("factorial", (n,), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
         val = math.factorial(n)
-        return {"value": val, "exact": str(val), "approx": float(val)}
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
-    # v3.7.7: LCM
     if kind == "lcm":
         a, b = comp["operands"]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("lcm", (a, b), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
         val = abs(a * b) // math.gcd(a, b) if a and b else 0
-        return {"value": val, "exact": str(val), "approx": float(val)}
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
+    if kind == "gcd":
+        a, b = comp["operands"]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("gcd", (a, b), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
+        val = math.gcd(a, b)
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
+
+    if kind == "sqrt":
+        a = comp["operands"][0]
+        if _NATIVE_OK:
+            try:
+                r = native_compute("sqrt", (a,), validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
+        val = math.sqrt(a)
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
+
+    if kind == "power":
+        if _NATIVE_OK:
+            try:
+                r = native_compute("power",
+                                   (comp["operands"][0], comp["operands"][1]),
+                                   validate=True)
+                return _wrap_native(r)
+            except Exception:
+                pass
+        n1, n2 = comp["operands"]
+        val = n1 ** n2
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
+
+    if kind == "arith":
+        n1, op, n2 = comp["operands"]
+        if _NATIVE_OK:
+            try:
+                kind_map = {"+": "add", "-": "sub", "*": "mul", "×": "mul",
+                            "/": "divmod", "÷": "divmod"}
+                native_kind = kind_map.get(op)
+                if native_kind:
+                    if native_kind == "divmod":
+                        r = native_compute("divmod", (int(n1), int(n2)), validate=True)
+                        # divmod returns (quotient, remainder); for plain
+                        # division we want quotient + remainder/divisor
+                        q = r.result[0]
+                        rem = r.result[1]
+                        if rem == 0:
+                            return _wrap_native(r, value_override=q,
+                                                exact_override=str(q),
+                                                approx_override=float(q))
+                        # Non-exact: return float
+                        val = n1 / n2 if n2 != 0 else 0
+                        return {"value": val, "exact": str(val),
+                                "approx": float(val),
+                                "trace": r.trace, "fingerprint": r.fingerprint,
+                                "native": True}
+                    else:
+                        r = native_compute(native_kind, (int(n1), int(n2)), validate=True)
+                        return _wrap_native(r)
+            except Exception:
+                pass
+        if op == "+": val = n1 + n2
+        elif op == "-": val = n1 - n2
+        elif op in ("*", "×"): val = n1 * n2
+        elif op in ("/", "÷"): val = n1 / n2 if n2 != 0 else 0
+        else: raise ValueError(f"Unknown operator {op}")
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
+
+    # ── Catch-all: try SymPy eval, then fail ─────────────────────────────
     if _HAS_SYMPY:
         try:
             clean_expr = _normalize_math(comp["expr"])
             val = sp.sympify(clean_expr)
             approx = float(val.evalf())
-            return {"value": val, "exact": str(val), "approx": approx}
+            return {"value": val, "exact": str(val), "approx": approx, "native": False}
         except Exception:
             pass
 
-    # Fallback when sympy is not present or fails
-    try:
-        if kind == "gcd":
-            a, b = comp["operands"]
-            val = math.gcd(a, b)
-            return {"value": val, "exact": str(val), "approx": float(val)}
-        elif kind == "sqrt":
-            a = comp["operands"][0]
-            val = math.sqrt(a)
-            return {"value": val, "exact": str(val), "approx": float(val)}
-        elif kind == "arith":
-            n1, op, n2 = comp["operands"]
-            if op == "+": val = n1 + n2
-            elif op == "-": val = n1 - n2
-            elif op in ("*", "×"): val = n1 * n2
-            elif op in ("/", "÷"): val = n1 / n2 if n2 != 0 else 0
-            else: raise ValueError(f"Unknown operator {op}")
-            return {"value": val, "exact": str(val), "approx": float(val)}
-    except Exception as e:
-        return {"value": None, "error": str(e), "exact": "Error", "approx": 0.0}
     return {"value": None, "error": "Evaluation failed", "exact": "N/A", "approx": 0.0}
+
+
+def _wrap_native(r, value_override=None, exact_override=None,
+                 approx_override=None) -> Dict[str, Any]:
+    """Convert a NativeResult into the v3.8.0-compatible return shape.
+
+    Preserves {value, exact, approx} for backward compat AND adds the new
+    v3.17.0 keys {trace, fingerprint, sympy_check, elapsed_us, native}.
+    """
+    return {
+        "value": value_override if value_override is not None else r.result,
+        "exact": exact_override or r.exact,
+        "approx": approx_override if approx_override is not None else r.approx,
+        "trace": r.trace,
+        "fingerprint": r.fingerprint,
+        "sympy_check": r.sympy_check,
+        "elapsed_us": r.elapsed_us,
+        "native": True,
+    }
 
 # ── 3. SYMBOLIC DETECTION & EVALUATION ─────────────────────────────────
 def detect_symbolic(query: str) -> Optional[Dict[str, Any]]:
@@ -520,7 +720,82 @@ def detect_symbolic(query: str) -> Optional[Dict[str, Any]]:
     return None
 
 def evaluate_symbolic(comp: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluates a detected symbolic operation."""
+    """Evaluates a detected symbolic operation.
+
+    v3.18.0: NATIVE-FIRST for polynomials. For differentiate/integrate,
+    we first try the native polynomial ALU (GLM28). If the expression is
+    a polynomial, the native path runs with full trace + fingerprint +
+    SymPy validation. If not, we fall back to SymPy via
+    symbolic_with_fingerprint (which still attaches a substrate fingerprint
+    to the SymPy result).
+
+    For all other symbolic ops (simplify, solve, partial_diff, gradient,
+    ode, taylor, limit, sum), SymPy remains the only engine — no native
+    equivalent exists. The result is fingerprinted via
+    symbolic_with_fingerprint.
+    """
+    # v3.18.0: Native polynomial path for differentiate/integrate
+    if _POLY_OK and comp.get("kind") in ("differentiate", "integrate"):
+        expr = comp.get("expr", "")
+        var = comp.get("var", "x")
+        try:
+            if _is_polynomial(expr, var):
+                if comp["kind"] == "differentiate":
+                    r = native_polynomial_diff(expr, var, validate=True)
+                else:
+                    r = native_polynomial_integrate(expr, var, validate=True)
+                # Convert to the v3.8.0-compatible return shape, but keep
+                # the new v3.18 fields (trace, fingerprint, sympy_check,
+                # native, elapsed_us) as additive keys.
+                return {
+                    "value": r.get("exact"),
+                    "exact": r.get("exact"),
+                    "approx": 0.0,
+                    "trace": r.get("trace", []),
+                    "fingerprint": r.get("fingerprint", {}),
+                    "sympy_check": r.get("sympy_check"),
+                    "elapsed_us": r.get("elapsed_us", 0),
+                    "native": r.get("native", True),
+                }
+        except Exception:
+            pass  # fall through to legacy SymPy path
+
+    # v3.18.0: For other symbolic ops, route through symbolic_with_fingerprint
+    # so the result still gets a substrate fingerprint. This completes the
+    # "native metrics everywhere" promise — even SymPy-only ops now carry
+    # {trace, fingerprint}.
+    # EXCEPTION: 'gradient' is multivariable and needs special handling that
+    # symbolic_with_fingerprint doesn't do well (it returns a tuple string
+    # whose ordering differs from what callers expect). Keep gradient on the
+    # legacy path for now.
+    if _NATIVE_OK and comp.get("kind") in ("simplify", "solve", "partial_diff",
+                                            "ode", "taylor", "limit",
+                                            "sum"):
+        try:
+            kwargs = {}
+            if comp.get("point"):
+                kwargs["point"] = comp["point"]
+            if comp.get("around"):
+                kwargs["around"] = comp["around"]
+            r = symbolic_with_fingerprint(
+                comp["kind"], comp.get("expr", ""), comp.get("var", "x"),
+                **kwargs,
+            )
+            # Merge into v3.8-compatible shape
+            return {
+                "value": r.get("result"),
+                "exact": r.get("exact"),
+                "approx": 0.0,
+                "trace": r.get("trace", []),
+                "fingerprint": r.get("fingerprint", {}),
+                "sympy_check": r.get("sympy_check"),
+                "elapsed_us": r.get("elapsed_us", 0),
+                "native": False,  # SymPy is still the engine for these ops
+            }
+        except Exception:
+            pass  # fall through to legacy SymPy path
+
+    # Legacy SymPy path (preserved verbatim from v3.9.0)
     if _HAS_SYMPY:
         try:
             x = sp.Symbol(comp["var"])
