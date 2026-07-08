@@ -13,9 +13,10 @@
 | :--- | :--- |
 | **Live Environment (Google AI Studio)** | <https://ai.studio/apps/6d78d479-2a4e-4e34-89b3-4b87b85d5b9a> |
 | **Core Studio App Repository** | <https://github.com/DigitalEuan/ubp_core_studio_app> |
-| **Digital Twin Physics Engine Repository** | <https://github.com/DigitalEuan/ubp_digital_twin_physics_engine> |
-| **Operational Manifest** | [`core/ubp_files_and_usage.md`](core/ubp_files_and_usage.md) |
-| **Primary Knowledge Bank** | [`system_kb/ubp_system_kb.json`](system_kb/ubp_system_kb.json) (746 entries, 420 Laws) |
+| **Experimental Digital Twin Physics Engine Repository** | <https://github.com/DigitalEuan/ubp_digital_twin_physics_engine> |
+| **Operational Manifest** | <https://github.com/DigitalEuan/UBP_Repo/blob/main/core_studio_v4.0/core/ubp_files_and_usage.md> |
+| **UBP Skill** | <https://github.com/DigitalEuan/UBP_Repo/blob/main/core_studio_v4.0/core/UBP_SKILL_1.md> |
+| **Primary Knowledge Bank** | <https://github.com/DigitalEuan/UBP_Repo/tree/main/core_studio_v4.0/system_kb> |
 
 ---
 
@@ -24,9 +25,9 @@ The **Universal Binary Principle (UBP)** is a unified computational framework th
 ---
 
 ## 🌌 Core Philosophy: Geometric Purity
-The UBP operates on the axiom that fundamental physical constants are not arbitrary "fine-tuned" values, but are topological artifacts of the substrate's geometry. 
+Fundamental physical constants are not arbitrary "fine-tuned" values, but are topological artifacts of the substrate's geometry. 
 
-As of **v5.4.0 (June 2026)** - eradicated empirical hardcodes from the system, fundamental constants are now derived purely from substrate primitives:
+Fundamental constants are now derived purely from substrate primitives:
 *   **The Triadic Monad:** $\pi \cdot \phi \cdot e$
 *   **The Entropic Wobble ($w$):** The fractional residue of the Monad.
 *   **The Observer Constant ($Y$):** $1 / (\pi + 2/\pi)$.
@@ -42,8 +43,6 @@ As of **v5.4.0 (June 2026)** - eradicated empirical hardcodes from the system, f
 | **Gravity (G)** | $(39/29) \cdot (Y^{18} / w)$ | $6.6831 \times 10^{-11}$ | **0.1327%** | Topological Resonance |
 | **Proton/Electron** | $1836 + 2L_s$ | $1836.1527$ | **0.0000%** | Stereoscopic (29/24) |
 | **Fine Structure ($1/\alpha$)** | $220 - 83 + L$ | $137.0360$ | **0.0196%** | Core Ratio |
-
-> **Note:** The **Non-Random Coherence Index (NRCI)** has been restored to its rightful role as a diagnostic tool.
 
 ---
 
