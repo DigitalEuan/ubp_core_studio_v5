@@ -509,41 +509,6 @@ class GLMRuntimeV37:
             verified=state.get("verified"),
         )
 
-    def chat_considered(self, query: str, fresh: bool = False) -> str:
-        """v3.20.0: Multi-paragraph considered response using Kracht's mode-algebra.
-
-        Produces a longer, more structured response than chat_prose. Each
-        sentence is a definite sign combination — gated on the simultaneous
-        definedness of all three Kracht homomorphisms (Exponent, Category,
-        Meaning). Indefinite combinations are dropped or hedged.
-
-        Structure:
-          Paragraph 1: Direct answer + query framing
-          Paragraph 2: Reasoning (CRG backbone walk with mode-algebraic gating)
-          Paragraph 3: Evidence (KB recalls, definitions, substrate metrics)
-          Paragraph 4: Conclusion (verification + summary)
-
-        Parameters
-        ----------
-        query : str
-            The user's query.
-        fresh : bool
-            If True, reset the IdeaManager before processing (eliminates
-            cross-topic bleed). Default False.
-
-        Returns
-        -------
-        str
-            A multi-paragraph response separated by "\\n\\n".
-        """
-        if fresh:
-            self.manager.reset()
-            self._turn = 0
-        state = self._run_pipeline(query)
-        state["_crg"] = self.crg  # pass CRG for mode-algebraic reasoning
-        from GLM33_considered_response import compose_considered
-        return compose_considered(state, self.vocab)
-
     def crg_alu(self):
         """v3.17.0: return a CRGTraversalALU bound to this runtime's CRG + vocab.
 
@@ -556,36 +521,6 @@ class GLMRuntimeV37:
             from GLM26_crg_alu import CRGTraversalALU
             self._crg_alu_instance = CRGTraversalALU(self.crg, self.vocab)
         return self._crg_alu_instance
-
-    def simplicial_crg(self, max_side: int = 8, max_faces: int = 200):
-        """v3.21.0: return a SimplicialCRG bound to this runtime's CRG + vocab.
-
-        Lazily constructed. The simplicial CRG augments the 1-skeleton
-        (graph) with 2-simplices (triangular faces) and provides:
-          - Betti numbers (β₀, β₁, β₂) — global topology health
-          - Euler characteristic χ = V − E + F
-          - topological_coherence(backbone) — "is this argument filled?"
-          - backbone_is_filled(backbone) — does the path bound faces?
-
-        This is the 2-complex upgrade from the design notes: moves from
-        "bad edge present" (contradiction_penalty) to "good cycle absent"
-        (topological hole detection).
-        """
-        if not hasattr(self, '_simplicial_crg_instance'):
-            from GLM34_simplicial_crg import SimplicialCRG, discover_faces
-            self._simplicial_crg_instance = SimplicialCRG(self.crg)
-            discover_faces(self._simplicial_crg_instance, self.vocab.words,
-                          max_side=max_side, max_faces=max_faces)
-            self._simplicial_crg_instance.build_node_geometry(self.vocab.words)
-        return self._simplicial_crg_instance
-
-    def topology_report(self):
-        """v3.21.0: return a TopologyReport for the current CRG.
-
-        Convenience method — equivalent to:
-            self.simplicial_crg().topology_report()
-        """
-        return self.simplicial_crg().topology_report()
 
     def chat_with_effort(self, query: str, max_ticks: int = 5) -> str:
         res = self.chat(query)
