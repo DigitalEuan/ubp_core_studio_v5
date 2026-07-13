@@ -104,11 +104,19 @@ class GLMGenerator:
 
     def __init__(self, vocab: Any, crg: Any, max_recent: int = 8,
                  min_weight: int = 4, max_weight: int = 20):
+        # v3.22.0: Session 2-6 best configuration as default
+        # resonance_weight=3.0, hamming_weight=0.0, crg_bonus=0.30
+        # (was: nearest-neighbor Hamming walk, no resonance)
         self.vocab = vocab
         self.crg = crg
         self.max_recent = max_recent
-        self.min_weight = min_weight  # exclude degenerate vectors (all-0s, all-1s)
+        self.min_weight = min_weight
         self.max_weight = max_weight
+        self.target_nrci = 0.7196  # saturation plateau
+        self.ema_alpha = 0.3       # EMA centroid update (prevents collapse)
+        self.crg_bonus = 0.30      # CRG guidance weight
+        self.resonance_weight = 3.0  # resonance dominates
+        self.hamming_weight = 0.0  # no Hamming term (Session 2 finding)
         # Precompute hex ints for fast Hamming
         self._hex_cache: Dict[str, int] = {}
         target = vocab.words if hasattr(vocab, 'words') else vocab

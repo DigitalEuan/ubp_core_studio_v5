@@ -274,6 +274,7 @@ def compose_prose(
     # v3.19.0: new kwargs for answer extraction + verification
     answer_block: Optional[Any] = None,
     verified: Optional[str] = None,
+    generated: Optional[str] = None,
 ) -> str:
     """Compose a fluent multi-sentence response from pipeline state.
 
@@ -334,6 +335,10 @@ def compose_prose(
         if nl:
             build = _pick(_BUILD_ONS, turn, query)
             sentences.append(f"{build}, {nl.lower()}")
+
+    # ── G2. Generated text (v3.22.0 — THE PLUMBING FIX) ─────────────────
+    if generated:
+        sentences.append(f"Extending from the substrate: {generated}")
 
     # ── H. Crystallisation ────────────────────────────────────────────────
     if zone and getattr(zone, 'crystallized', False) and getattr(zone, 'thesis', ''):

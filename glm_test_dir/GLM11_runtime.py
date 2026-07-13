@@ -415,6 +415,27 @@ class GLMRuntimeV37:
             except Exception:
                 pass
 
+        # ════════════════════════════════════════════════════════════════════
+        # 7. GENERATION (v3.22.0 — THE PLUMBING FIX)
+        # Wire GLM22 ontological grammar into the chat pipeline.
+        # This is the missing piece: the generation engine EXISTS but was
+        # never called by chat() or chat_prose().
+        # ════════════════════════════════════════════════════════════════════
+        generated = None
+        try:
+            from GLM22_ontological_grammar import OntologicalGrammar
+            grammar = OntologicalGrammar(self.vocab, self.crg)
+            # Use the zone's topic nouns as seed
+            topic_nouns = getattr(self.manager.active, 'topic_nouns', [])
+            if not topic_nouns and content:
+                topic_nouns = [w for w, _ in content[:3]]
+            if not topic_nouns:
+                topic_nouns = ["hamiltonian"]  # fallback
+            seed = topic_nouns[0] if topic_nouns else "hamiltonian"
+            generated = grammar.construct_paragraph(seed, n_sentences=3)
+        except Exception:
+            generated = None
+
         # v3.19.0: Extract the clean answer and verification statement
         answer_block = None
         verified = None
@@ -451,6 +472,7 @@ class GLMRuntimeV37:
             # v3.19.0: new fields
             "answer_block": answer_block,
             "verified": verified,
+            "generated": generated,
         }
 
     def chat(self, query: str) -> str:
@@ -469,6 +491,7 @@ class GLMRuntimeV37:
             # v3.19.0: new kwargs
             answer_block=state.get("answer_block"),
             verified=state.get("verified"),
+            generated=state.get("generated"),
         )
 
     def chat_prose(self, query: str, fresh: bool = False) -> str:

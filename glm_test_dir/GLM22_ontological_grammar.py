@@ -36,6 +36,25 @@ from dataclasses import dataclass
 
 from GLM01_substrate import BLA, vector_to_hex_int, fast_hamming
 
+# v3.22.0: Physics-verb whitelist for verb quality.
+# When the gap-vector method picks a random verb, filter to these
+# high-frequency physics verbs for coherent output.
+PHYSICS_VERBS = {
+    "generates", "measures", "commutes", "scales", "transforms", "produces",
+    "contains", "determines", "describes", "relates", "connects", "bounds",
+    "constrains", "preserves", "breaks", "creates", "destroys", "exchanges",
+    "couples", "decouples", "projects", "maps", "reduces", "extends", "limits",
+    "equals", "approaches", "diverges", "converges", "flows", "propagates",
+    "evolves", "rotates", "translates", "reflects", "absorbs", "emits",
+    "interacts", "overlaps", "separates", "combines", "splits", "integrates",
+    "differentiates", "averages", "fluctuates", "oscillates", "resonates",
+    "interferes", "tunnels", "scatters", "depends", "implies", "follows",
+    "precedes", "accompanies", "characterizes", "quantifies", "parametrizes",
+    "specifies", "realizes", "represents", "embodies", "manifests",
+    "exhibits", "undergoes", "transitions", "condenses", "excites",
+    "annihilates", "mediates", "dominates", "renormalizes", "regularizes",
+    "quantizes",
+}
 
 # ── 1. QUADRANT → GRAMMAR MAP ────────────────────────────────────────────────
 
@@ -177,45 +196,74 @@ class OntologicalGrammar:
     def construct_sentence(self, subject: str, obj: str,
                            gap_mode: str = "and",
                            max_verb_distance: int = 8) -> Optional[ComputedSentence]:
-        """Construct a sentence: Subject → Verb → Object.
-
-        The verb is COMPUTED from the gap between subject and object.
-        No template lookup — pure geometric construction.
-
-        v3.17.0: Added `max_verb_distance` gate. The SESSION_SUMMARY (§4)
-        confirmed `generate_grammatical()` produces word salad because the
-        "nearest VERB" to a noun-pair gap is often Hamming-distance 10+
-        away — the verb is essentially arbitrary within the Q2 cluster.
-        We now return None if `verb_dist > max_verb_distance`, which lets
-        `construct_paragraph` break the chain gracefully instead of emitting
-        garbage. Default 8 (half the codeword distance) is a reasonable
-        cutoff; tune via parameter.
-        """
         target = self.vocab.words if hasattr(self.vocab, 'words') else self.vocab
         s_entry = target.get(subject)
         o_entry = target.get(obj)
-        if not s_entry or not o_entry or not s_entry.vector or not o_entry.vector:
+        if not s_entry or not o_entry or not getattr(s_entry, 'vector', None) or not getattr(o_entry, 'vector', None):
             return None
 
         s_role = computed_role(subject, self.vocab)
         o_role = computed_role(obj, self.vocab)
 
-        # Compute the gap vector
         gap = gap_vector(s_entry.vector, o_entry.vector, mode=gap_mode)
         gap_q = dominant_quadrant(gap)
 
-        # Find the nearest VERB to the gap vector
-        # If the gap itself is VERB-dominant, we're in luck — the geometry
-        # naturally produces a verb.  If not, we still search for the nearest
-        # verb to the gap.
-        verb_result = self._nearest_word(gap, "VERB", exclude={subject, obj})
-        if not verb_result:
-            # No verbs in vocab — fall back to a relation word
-            verb_result = self._nearest_word(gap, "OPERATOR", exclude={subject, obj})
-        if not verb_result:
-            return None
+        # v3.22.0: VERB QUALITY FIX — two-part approach
+        # Part 1: Check CRG for an edge label between subject and object
+        crg_verb = None
+        if self.crg:
+            for edge in self.crg.out.get(subject.lower(), []):
+                if edge.dst.lower() == obj.lower():
+                    label = edge.label.replace("_", " ")
+                    verb_map = {
+                        "is_a": "is", "has_property": "has",
+                        "depends_on": "depends on",
+                        "commutes_with": "commutes with",
+                        "scales_as": "scales as",
+                        "is_dual_to": "is dual to",
+                        "generates": "generates", "measures": "measures",
+                        "co_occurs": "co-occurs with",
+                        "relates_to": "relates to",
+                    }
+                    crg_verb = verb_map.get(label, label)
+                    break
 
-        verb, verb_dist = verb_result
+        if crg_verb:
+            verb = crg_verb
+            verb_dist = 0
+            v_role = "VERB"
+        else:
+            # Part 2: Physics-verb whitelist
+            gap_hex = vector_to_hex_int(gap)
+
+            best_verb = None
+            best_dist = 999
+            for w, (h, role, _) in self._word_data.items():
+                if role != "VERB" or w == subject or w == obj:
+                    continue
+                if w.lower() not in PHYSICS_VERBS:
+                    continue
+                d = fast_hamming(gap_hex, h)
+                if d < best_dist and d <= max_verb_distance:
+                    best_dist = d
+                    best_verb = w
+
+            if not best_verb:
+                # Fallback: any VERB within distance
+                for w, (h, role, _) in self._word_data.items():
+                    if role != "VERB" or w == subject or w == obj:
+                        continue
+                    d = fast_hamming(gap_hex, h)
+                    if d < best_dist and d <= max_verb_distance:
+                        best_dist = d
+                        best_verb = w
+
+            if not best_verb:
+                return None
+
+            verb = best_verb
+            verb_dist = best_dist
+            v_role = computed_role(verb, self.vocab)
 
         # v3.17.0: word-salad gate. If the nearest verb is too far from the
         # gap, the geometric relationship is too weak to support a meaningful
