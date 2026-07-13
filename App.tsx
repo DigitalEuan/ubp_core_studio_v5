@@ -774,7 +774,9 @@ if '/home/pyodide' not in sys.path:
                 'GLM20_svd_vocab.py', 'GLM21_generator.py', 'GLM22_ontological_grammar.py', 'GLM23_grammar_vectors.py',
                 'GLM24_continuous_learner.py', 'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py',
                 'GLM28_native_poly.py', 'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py',
-                'test_v319_levelling.py', 'golden_cases.json', 'run_golden_cases.py'
+                'GLM32_mode_algebra.py', 'GLM33_considered_response.py', 'GLM34_simplicial_crg.py',
+                'test_v321_levelling.py', 'golden_cases.json', 'run_golden_cases.py',
+                'glm_unified_resource.json', 'glm_master_resource_v1.json'
             ];
             
             let fetchedGLM: FileTab[] = [];

@@ -1,0 +1,282 @@
+[
+  {
+    "id": "MN_NT_001",
+    "suite": "mathnet",
+    "category": "Number Theory",
+    "difficulty": "medium",
+    "query": "Find all positive integers n for which 2^n - 1 is divisible by 7.",
+    "expected": "divisible by 3",
+    "got_short": "[Gap] No verified vector for: divisible  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": false
+  },
+  {
+    "id": "MN_NT_003",
+    "suite": "mathnet",
+    "category": "Number Theory",
+    "difficulty": "easy",
+    "query": "Prove that the fraction (21n+4)/(14n+3) is irreducible for every natural number n.",
+    "expected": "gcd",
+    "got_short": "[Zone: forming | coherence=0.20 | nouns=2]  [KB] Number: A scalar quantity counting elements of a set.  [Metrics] NRCI=0.917 | Tax=4.50  [Gap] No verified vector for: irreducible  [Generated] Action d",
+    "ok": false
+  },
+  {
+    "id": "MN_NT_005",
+    "suite": "mathnet",
+    "category": "Number Theory",
+    "difficulty": "hard",
+    "query": "Find the largest integer n such that n is divisible by all positive integers less than the cube root of n.",
+    "expected": "420",
+    "got_short": "[Gap] No verified vector for: largest, divisible, less  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": false
+  },
+  {
+    "id": "MN_ALG_002",
+    "suite": "mathnet",
+    "category": "Algebra",
+    "difficulty": "easy",
+    "query": "Let a, b, c be positive reals with a + b + c = 1. Prove that a^2 + b^2 + c^2 >= 1/3.",
+    "expected": "1/3",
+    "got_short": "[Computed] 1/3 = 0.3333333333333333  [Answer] 0.3333333333333333  [Verified] legacy computation (arith), no independent check  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent",
+    "ok": true
+  },
+  {
+    "id": "MN_ALG_004",
+    "suite": "mathnet",
+    "category": "Algebra",
+    "difficulty": "medium",
+    "query": "Find all real solutions to x^4 - 3x^3 + 4x^2 - 3x + 1 = 0.",
+    "expected": "1",
+    "got_short": "[Zone: forming | coherence=0.43 | nouns=1]  [Symbolic] solve: N/A  [Metrics] NRCI=0.500 | Tax=0.00  [Gap] No verified vector for: solutions  [Verified] SymPy computation (solve), no independent native",
+    "ok": true
+  },
+  {
+    "id": "MN_GEO_002",
+    "suite": "mathnet",
+    "category": "Geometry",
+    "difficulty": "medium",
+    "query": "In triangle ABC, the median from A has length m_a. Prove that m_a <= (b+c)/2.",
+    "expected": "(b+c)/2",
+    "got_short": "[Zone: forming | coherence=0.49 | nouns=0]  [Metrics] NRCI=0.750 | Tax=1.50  [Gap] No verified vector for: triangle, abc, median  [Generated] Has interact renormalization. Renormalization depends on r",
+    "ok": false
+  },
+  {
+    "id": "MN_GEO_004",
+    "suite": "mathnet",
+    "category": "Geometry",
+    "difficulty": "easy",
+    "query": "In a right triangle with legs a and b and hypotenuse c, prove that a + b <= c*sqrt(2).",
+    "expected": "sqrt(2)",
+    "got_short": "[Computed] sqrt(2) = 1.4142135623730951  [Gap] No verified vector for: right, triangle, legs  [Answer] 1.4142135623730951  [Verified] legacy computation (sqrt), no independent check  [Generated] Hamil",
+    "ok": true
+  },
+  {
+    "id": "MN_GEO_005",
+    "suite": "mathnet",
+    "category": "Geometry",
+    "difficulty": "medium",
+    "query": "A regular tetrahedron has edge length a. Find the radius of the inscribed sphere.",
+    "expected": "sqrt(6)",
+    "got_short": "[Zone: forming | coherence=0.29 | nouns=1]  [KB] Regulator: Auxiliary parameter introduced to tame divergences.  [Metrics] NRCI=0.833 | Tax=5.00  [Gap] No verified vector for: tetrahedron, edge, lengt",
+    "ok": false
+  },
+  {
+    "id": "MN_COMB_002",
+    "suite": "mathnet",
+    "category": "Combinatorics",
+    "difficulty": "easy",
+    "query": "In how many ways can n identical balls be distributed into k distinct boxes such that each box contains at least one ball?",
+    "expected": "C(n-1, k-1)",
+    "got_short": "[Zone: forming | coherence=0.29 | nouns=1]  [Metrics] NRCI=0.917 | Tax=1.50  [Gap] No verified vector for: identical, balls, distributed  [Generated] One relativistic hundred. Hundred eight zero. Zero",
+    "ok": false
+  },
+  {
+    "id": "MN_COMB_004",
+    "suite": "mathnet",
+    "category": "Combinatorics",
+    "difficulty": "hard",
+    "query": "How many subsets of {1, 2, 3, ..., 10} have the property that the sum of the elements is divisible by 3?",
+    "expected": "344",
+    "got_short": "[Gap] No verified vector for: subsets, property, sum  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": false
+  },
+  {
+    "id": "CALC_01",
+    "suite": "mathnet_expanded",
+    "category": "calculus",
+    "difficulty": "medium",
+    "query": "Find the derivative of x^3 * sin(x) with respect to x.",
+    "expected": "3*x**2*sin(x) + x**3*cos(x)",
+    "got_short": "[Zone: forming | coherence=0.45 | nouns=1]  [Symbolic] differentiate: 3*x**2  [KB] Derivative: Rate of change of a function with respect to a variable.  [Metrics] NRCI=0.500 | Tax=2.00  [Gap] No verif",
+    "ok": false
+  },
+  {
+    "id": "CALC_03",
+    "suite": "mathnet_expanded",
+    "category": "calculus",
+    "difficulty": "medium",
+    "query": "Evaluate the integral of x^2 * exp(x) with respect to x.",
+    "expected": "(x**2 - 2*x + 2)*exp(x)",
+    "got_short": "[Zone: forming | coherence=0.45 | nouns=1]  [Symbolic] integrate: N/A  [KB] Integral: Antiderivative or sum over a continuum.  [Metrics] NRCI=0.500 | Tax=4.00  [Gap] No verified vector for: exp, respe",
+    "ok": false
+  },
+  {
+    "id": "ALG_04",
+    "suite": "mathnet_expanded",
+    "category": "algebra",
+    "difficulty": "easy",
+    "query": "Solve x^2 - 4 = 0 for x.",
+    "expected": "[-2, 2]",
+    "got_short": "[Symbolic] solve: [-2, 2]  [Gap] No verified vector for: solve  [Answer] x = -2, 2  [Verified] SymPy computation (solve), no independent native check  [Generated] Hamiltonian commutes with symmetry. S",
+    "ok": true
+  },
+  {
+    "id": "ALG_05",
+    "suite": "mathnet_expanded",
+    "category": "algebra",
+    "difficulty": "easy",
+    "query": "Simplify (x^2 - 1)/(x - 1).",
+    "expected": "x + 1",
+    "got_short": "[Symbolic] simplify: N/A  [Gap] No verified vector for: simplify  [Verified] SymPy computation (simplify), no independent native check  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice",
+    "ok": false
+  },
+  {
+    "id": "NUM_01",
+    "suite": "mathnet_expanded",
+    "category": "number_theory",
+    "difficulty": "easy",
+    "query": "Find the greatest common divisor of 252 and 198.",
+    "expected": "18",
+    "got_short": "[Computed] gcd(252,198) = 18  -> Snapped to lattice point 'eighteen'  [Gap] No verified vector for: greatest, common, divisor  [Answer] 18  [Generated] Hamiltonian commutes with symmetry. Symmetry lat",
+    "ok": true
+  },
+  {
+    "id": "NUM_03",
+    "suite": "mathnet_expanded",
+    "category": "number_theory",
+    "difficulty": "easy",
+    "query": "Find the GCD of 48 and 36.",
+    "expected": "12",
+    "got_short": "[Computed] gcd(48,36) = 12  -> Snapped to lattice point 'twelve'  [Gap] No verified vector for: gcd  [Answer] 12  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Che",
+    "ok": true
+  },
+  {
+    "id": "NUM_04",
+    "suite": "mathnet_expanded",
+    "category": "number_theory",
+    "difficulty": "easy",
+    "query": "Find the LCM of 12 and 18.",
+    "expected": "36",
+    "got_short": "[Computed] lcm(12,18) = 36  [Gap] No verified vector for: lcm  [Answer] 36  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": true
+  },
+  {
+    "id": "VEC_02",
+    "suite": "mathnet_expanded",
+    "category": "vector_physics",
+    "difficulty": "easy",
+    "query": "Compute the dot product of <3, -1, 4> and <2, 5, -3>.",
+    "expected": "-11",
+    "got_short": "[Zone: forming | coherence=0.45 | nouns=1]  [Computed] dot([3.0, -1.0, 4.0], [2.0, 5.0, -3.0]) = -11  [Recall] Dot Product  [KB] Dot Product: Scalar product of two vectors: a.  [Metrics] NRCI=0.500 | ",
+    "ok": true
+  },
+  {
+    "id": "VEC_03",
+    "suite": "mathnet_expanded",
+    "category": "vector_physics",
+    "difficulty": "easy",
+    "query": "Find the magnitude of the vector <3, 4, 12>.",
+    "expected": "13",
+    "got_short": "[Zone: forming | coherence=0.40 | nouns=2]  [Computed] |[3.0, 4.0, 12.0]| = 13  -> Snapped to lattice point 'thirteen'  [Recall] Magnitude, Vector  [KB] Vector: Element of a vector space with magnitud",
+    "ok": true
+  },
+  {
+    "id": "COMB_04",
+    "suite": "mathnet_expanded",
+    "category": "combinatorics",
+    "difficulty": "easy",
+    "query": "Compute 6 factorial.",
+    "expected": "720",
+    "got_short": "[Computed] 6! = 720  [Gap] No verified vector for: factorial  [Answer] 720  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": true
+  },
+  {
+    "id": "CRITPT_01_PLACEHOLDER",
+    "suite": "critpt",
+    "category": "holography",
+    "difficulty": "hard",
+    "query": "What is the Weyl anomaly in a holographic QFT?",
+    "expected": "weyl anomaly",
+    "got_short": "[Zone: forming | coherence=0.38 | nouns=2]  [Recall] Weyl Anomaly, Holographic, Qft  [KB] Weyl Anomaly: Quantum violation of Weyl invariance encoded in the trace of T_munu.  [Metrics] NRCI=0.500 | Tax",
+    "ok": true
+  },
+  {
+    "id": "LANG_MULTIWORD_01",
+    "suite": "language",
+    "category": "multiword",
+    "difficulty": "easy",
+    "query": "What is the weyl anomaly?",
+    "expected": "weyl anomaly",
+    "got_short": "[Zone: forming | coherence=0.45 | nouns=1]  [Recall] Weyl Anomaly  [KB] Weyl Anomaly: Quantum violation of Weyl invariance encoded in the trace of T_munu.  [Metrics] NRCI=0.500 | Tax=2.00  [Generated]",
+    "ok": true
+  },
+  {
+    "id": "LANG_MULTIWORD_02",
+    "suite": "language",
+    "category": "multiword",
+    "difficulty": "easy",
+    "query": "Tell me about the beta function in QFT.",
+    "expected": "beta function",
+    "got_short": "[Zone: forming | coherence=0.33 | nouns=2]  [Recall] Beta Function, Qft  [KB] Beta Function: RG-flow equation d(g)/d(ln mu) encoding scale dependence of a coupling.  [Metrics] NRCI=0.667 | Tax=6.00  [",
+    "ok": true
+  },
+  {
+    "id": "LANG_LATEX_01",
+    "suite": "language",
+    "category": "latex",
+    "difficulty": "medium",
+    "query": "What does $\\alpha + \\beta$ mean?",
+    "expected": "alpha",
+    "got_short": "[Zone: forming | coherence=0.36 | nouns=2]  [Recall] Alpha, Beta  [KB] Beta: Beta function: RG flow of a coupling with energy scale.  [Metrics] NRCI=0.917 | Tax=5.00  [Generated] Alpha hopping codewor",
+    "ok": true
+  },
+  {
+    "id": "LANG_ALIAS_01",
+    "suite": "language",
+    "category": "alias",
+    "difficulty": "easy",
+    "query": "Tell me about the monster group.",
+    "expected": "moonshine",
+    "got_short": "[Zone: forming | coherence=0.48 | nouns=1]  [Recall] Group  [KB] Group: Algebraic structure of symmetry transformations.  [Metrics] NRCI=0.667 | Tax=4.00  [Gap] No verified vector for: monster  [Gener",
+    "ok": false
+  },
+  {
+    "id": "FAIL_EMPTY",
+    "suite": "failure",
+    "category": "edge",
+    "difficulty": "easy",
+    "query": "",
+    "expected": "",
+    "got_short": "",
+    "ok": true
+  },
+  {
+    "id": "FAIL_NONSENSE",
+    "suite": "failure",
+    "category": "edge",
+    "difficulty": "easy",
+    "query": "qwerty asdf zxcv",
+    "expected": "gap",
+    "got_short": "[Gap] No verified vector for: qwerty, asdf, zxcv  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": true
+  },
+  {
+    "id": "FAIL_LATEX_GARBAGE",
+    "suite": "failure",
+    "category": "edge",
+    "difficulty": "easy",
+    "query": "\\nonexistent\\command{arg}",
+    "expected": "",
+    "got_short": "[Gap] No verified vector for: arg  [Generated] Hamiltonian commutes with symmetry. Symmetry lattice adjacent 1 chern. Chern photocurrent contains.",
+    "ok": true
+  }
+]

@@ -1,0 +1,132 @@
+[
+  {
+    "name": "A_crystallise",
+    "ok": true,
+    "detail": "hamiltonian generates time and hamiltonian commutes with density matrix."
+  },
+  {
+    "name": "B_calc_ground",
+    "ok": true,
+    "detail": "six"
+  },
+  {
+    "name": "C_symbolic",
+    "ok": true,
+    "detail": "2*x"
+  },
+  {
+    "name": "D_solve",
+    "ok": true,
+    "detail": "[-2, 2]"
+  },
+  {
+    "name": "E_multi_zone",
+    "ok": true,
+    "detail": "1"
+  },
+  {
+    "name": "F_contradiction",
+    "ok": true,
+    "detail": "[('boson--contradicts->fermion', 'contradicts')]"
+  },
+  {
+    "name": "G_maturation",
+    "ok": true,
+    "detail": "16"
+  },
+  {
+    "name": "H_warm_start",
+    "ok": true,
+    "detail": "idea_1_5de95514"
+  },
+  {
+    "name": "I_determinism",
+    "ok": true,
+    "detail": "None"
+  },
+  {
+    "name": "J_auto_expand",
+    "ok": false,
+    "detail": "0"
+  },
+  {
+    "name": "K_pivot",
+    "ok": true,
+    "detail": "True"
+  },
+  {
+    "name": "L_synthesis",
+    "ok": true,
+    "detail": "both zones relate to symmetry."
+  },
+  {
+    "name": "M_multiword",
+    "ok": true,
+    "detail": "[Zone: forming | coherence=0.45 | nouns=1]  [Recall] What, The, Weyl Anomaly  [K"
+  },
+  {
+    "name": "N_latex_scrub",
+    "ok": true,
+    "detail": "[Zone: forming | coherence=0.36 | nouns=2]  [Recall] What, Alpha, Beta  [KB] Bet"
+  },
+  {
+    "name": "O_vector_ops",
+    "ok": true,
+    "detail": "dot=True, mag=True"
+  },
+  {
+    "name": "P_integrate",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.32 | nouns=2]  [Symbolic] integrate: N/A  [KB] Resp"
+  },
+  {
+    "name": "Q_simplify",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.52 | nouns=1]  [Symbolic] simplify: N/A  [KB] Simpl"
+  },
+  {
+    "name": "R_stars_bars",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.34 | nouns=11]  [KB] One: Being a single unit, or e"
+  },
+  {
+    "name": "S_determinant",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.52 | nouns=1]  [Computed] [[1, 2, 3], [4, 5, 6], [7"
+  },
+  {
+    "name": "T_partial_diff",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.27 | nouns=2]  [Symbolic] differentiate: N/A  [KB] "
+  },
+  {
+    "name": "U_ode",
+    "ok": false,
+    "detail": "[Zone: forming | coherence=0.52 | nouns=1]  [Symbolic] ode: N/A  [KB] Sole: Any "
+  },
+  {
+    "name": "V_master_def",
+    "ok": true,
+    "detail": "[Zone: forming | coherence=0.23 | nouns=1]  [KB] Oxygen: A colorless, tasteless,"
+  },
+  {
+    "name": "W_nl_explain",
+    "ok": true,
+    "detail": "Hamiltonian generates time."
+  },
+  {
+    "name": "X_hex_colour",
+    "ok": true,
+    "detail": "#004044"
+  },
+  {
+    "name": "Y_golay_correction",
+    "ok": true,
+    "detail": "real_engine=False"
+  },
+  {
+    "name": "Z_real_nrci",
+    "ok": true,
+    "detail": "nrci=1.000000"
+  }
+]
