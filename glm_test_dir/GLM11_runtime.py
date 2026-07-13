@@ -530,6 +530,8 @@ class GLMRuntimeV37:
             # v3.19.0: new kwargs
             answer_block=state.get("answer_block"),
             verified=state.get("verified"),
+            # v3.22.0: ontological grammar generation
+            generated=state.get("generated"),
         )
 
     def chat_considered(self, query: str, fresh: bool = False) -> str:
