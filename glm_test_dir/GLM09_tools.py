@@ -651,287 +651,52 @@ def _wrap_native(r, value_override=None, exact_override=None,
 
 # ── 3. SYMBOLIC DETECTION & EVALUATION ─────────────────────────────────
 def detect_symbolic(query: str) -> Optional[Dict[str, Any]]:
-    """Detects if a query contains a symbolic math operation."""
-    # v3.8.0: use a LIGHT LaTeX scrub (preserves ^, _, +, -) so symbolic
-    # expressions like 'x^2' survive.  The full scrub_latex is too aggressive
-    # (it strips ^ which breaks polynomial matching).
-    q = _strip_math_delimiters(query).strip().replace('`', '')
-
-    # v3.9.0: Check ODE FIRST (before solve) — "Solve the ODE: y' = y"
-    # would otherwise match the solve detector.
-    m = _ODE_RE.search(q)
-    if m:
-        return {"kind":"ode", "expr": m.group(1).strip(), "var": "x"}
-    m = _ODE_DYDX_RE.search(q)
-    if m:
-        return {"kind":"ode", "expr": "y' = " + m.group(1).strip(), "var": "x"}
-    m = _ODE_PRIME_RE.search(q)
-    if m:
-        return {"kind":"ode", "expr": "y' = " + m.group(1).strip(), "var": "x"}
-
-    m = _DIFF_RE.search(q)
-    if m:
-        return {"kind":"differentiate", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
-
-    m = _INTEGRATE_RE.search(q)
-    if m:
-        return {"kind":"integrate", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
-
-    m = _SIMPLIFY_RE.search(q)
-    if m:
-        return {"kind":"simplify", "expr": m.group(1).strip(), "var": "x"}
-
-    m = _SOLVE_RE.search(q)
-    if m:
-        return {"kind":"solve", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
-
-    # v3.9.0: Partial derivative
-    m = _PARTIAL_DIFF_RE.search(q)
-    if m:
-        return {"kind":"partial_diff", "expr": m.group(1).strip(),
-                "var": m.group(2).strip()}
-
-    # v3.9.0: Gradient (multivariable)
-    m = _GRADIENT_RE.search(q)
-    if m:
-        # Gradient needs all variables in the expression
-        return {"kind":"gradient", "expr": m.group(1).strip(), "var": "x"}
-
-    # v3.9.0: Taylor series
-    m = _TAYLOR_RE2.search(q)  # Try the "around N" variant first (more specific)
-    if m:
-        return {"kind":"taylor", "expr": m.group(1).strip(),
-                "var": "x", "around": m.group(2)}
-    m = _TAYLOR_RE.search(q)
-    if m:
-        return {"kind":"taylor", "expr": m.group(1).strip(),
-                "var": m.group(2) or "x", "around": m.group(3) or "0"}
-
-    # v3.9.0: Limit
-    m = _LIMIT_RE.search(q)
-    if m:
-        return {"kind":"limit", "expr": m.group(1).strip(),
-                "var": m.group(2).strip(),
-                "point": m.group(3).strip()}
-
-    # v3.9.0: Sum / series
-    m = _SERIES_RE.search(q)
-    if m:
-        return {"kind":"sum", "expr": m.group(1).strip(), "var": "x"}
-
+    import re
+    q = _strip_math_delimiters(query).strip()
+    q_clean = re.sub(r'^(what is|calculate|solve|evaluate|compute|find|can you|please)\s+', '', q, flags=re.I)
+    
+    # A. Integration (Prioritize dx notation)
+    m_int_dx = re.search(r'(?:integrate|integral of|integral)\s+(.*?)\s*d([a-z])\b', q_clean, re.I)
+    if m_int_dx:
+        return {'kind': 'integrate', 'expr': m_int_dx.group(1).strip(), 'var': m_int_dx.group(2)}
+    
+    # B. Expand
+    m_exp = re.search(r'expand\s*\(?(.*?)\)?$', q_clean, re.I)
+    if m_exp: return {'kind': 'expand', 'expr': m_exp.group(1)}
+    
+    # C. Factor
+    m_fac = re.search(r'factor(?:ize)?\s*\(?(.*?)\)?$', q_clean, re.I)
+    if m_fac: return {'kind': 'factor', 'expr': m_fac.group(1)}
+    
+    # D. Differentiate
+    m_diff = re.search(r'(?:differentiate|derivative of|d/dx)\s+(.+?)(?:\s+with respect to\s+(\w+))?(?:[\?\.]|$)', q_clean, re.I)
+    if m_diff: return {'kind': 'differentiate', 'expr': m_diff.group(1), 'var': m_diff.group(2) or 'x'}
+    
     return None
-
-def evaluate_symbolic(comp: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluates a detected symbolic operation.
-
-    v3.18.0: NATIVE-FIRST for polynomials. For differentiate/integrate,
-    we first try the native polynomial ALU (GLM28). If the expression is
-    a polynomial, the native path runs with full trace + fingerprint +
-    SymPy validation. If not, we fall back to SymPy via
-    symbolic_with_fingerprint (which still attaches a substrate fingerprint
-    to the SymPy result).
-
-    For all other symbolic ops (simplify, solve, partial_diff, gradient,
-    ode, taylor, limit, sum), SymPy remains the only engine — no native
-    equivalent exists. The result is fingerprinted via
-    symbolic_with_fingerprint.
-    """
-    # v3.18.0: Native polynomial path for differentiate/integrate
-    if _POLY_OK and comp.get("kind") in ("differentiate", "integrate"):
-        expr = comp.get("expr", "")
-        var = comp.get("var", "x")
-        try:
-            if _is_polynomial(expr, var):
-                if comp["kind"] == "differentiate":
-                    r = native_polynomial_diff(expr, var, validate=True)
-                else:
-                    r = native_polynomial_integrate(expr, var, validate=True)
-                # Convert to the v3.8.0-compatible return shape, but keep
-                # the new v3.18 fields (trace, fingerprint, sympy_check,
-                # native, elapsed_us) as additive keys.
-                return {
-                    "value": r.get("exact"),
-                    "exact": r.get("exact"),
-                    "approx": 0.0,
-                    "trace": r.get("trace", []),
-                    "fingerprint": r.get("fingerprint", {}),
-                    "sympy_check": r.get("sympy_check"),
-                    "elapsed_us": r.get("elapsed_us", 0),
-                    "native": r.get("native", True),
-                }
-        except Exception:
-            pass  # fall through to legacy SymPy path
-
-    # v3.18.0: For other symbolic ops, route through symbolic_with_fingerprint
-    # so the result still gets a substrate fingerprint. This completes the
-    # "native metrics everywhere" promise — even SymPy-only ops now carry
-    # {trace, fingerprint}.
-    # EXCEPTION: 'gradient' is multivariable and needs special handling that
-    # symbolic_with_fingerprint doesn't do well (it returns a tuple string
-    # whose ordering differs from what callers expect). Keep gradient on the
-    # legacy path for now.
-    if _NATIVE_OK and comp.get("kind") in ("simplify", "solve", "partial_diff",
-                                            "ode", "taylor", "limit",
-                                            "sum"):
-        try:
-            kwargs = {}
-            if comp.get("point"):
-                kwargs["point"] = comp["point"]
-            if comp.get("around"):
-                kwargs["around"] = comp["around"]
-            r = symbolic_with_fingerprint(
-                comp["kind"], comp.get("expr", ""), comp.get("var", "x"),
-                **kwargs,
-            )
-            # Merge into v3.8-compatible shape
-            return {
-                "value": r.get("result"),
-                "exact": r.get("exact"),
-                "approx": 0.0,
-                "trace": r.get("trace", []),
-                "fingerprint": r.get("fingerprint", {}),
-                "sympy_check": r.get("sympy_check"),
-                "elapsed_us": r.get("elapsed_us", 0),
-                "native": False,  # SymPy is still the engine for these ops
-            }
-        except Exception:
-            pass  # fall through to legacy SymPy path
-
-    # Legacy SymPy path (preserved verbatim from v3.9.0)
-    if _HAS_SYMPY:
-        try:
-            x = sp.Symbol(comp["var"])
-            clean_expr = _normalize_math(comp["expr"])
-
-            if comp["kind"] == "differentiate":
-                result = sp.diff(sp.sympify(clean_expr), x)
-                result = _canonicalize_sympy(result, x, kind="differentiate")
-            elif comp["kind"] == "integrate":
-                result = sp.integrate(sp.sympify(clean_expr), x)
-                result = _canonicalize_sympy(result, x, kind="integrate")
-            elif comp["kind"] == "simplify":
-                result = sp.simplify(sp.sympify(clean_expr))
-                result = _canonicalize_sympy(result, x, kind="simplify")
-            elif comp["kind"] == "solve":
-                if '=' in clean_expr:
-                    parts = clean_expr.split('=')
-                    eq = sp.Eq(sp.sympify(_normalize_math(parts[0])), sp.sympify(_normalize_math(parts[1])))
-                    result = sp.solve(eq, x)
-                else:
-                    result = sp.solve(sp.sympify(clean_expr), x)
-            # v3.9.0: Partial derivative
-            elif comp["kind"] == "partial_diff":
-                # The "var" is the partial-diff variable; we treat it as the
-                # single variable to differentiate against.
-                v = sp.Symbol(comp["var"])
-                # The expression may contain other variables; sympify will pick them up
-                result = sp.diff(sp.sympify(clean_expr), v)
-                result = _canonicalize_sympy(result, v, kind="differentiate")
-            # v3.9.0: Gradient (multivariable)
-            elif comp["kind"] == "gradient":
-                expr = sp.sympify(clean_expr)
-                # Find all free symbols in the expression
-                free = sorted(expr.free_symbols, key=lambda s: s.name)
-                if not free:
-                    return {"value": None, "error": "No variables in expression", "exact": "N/A"}
-                # Compute the gradient as a tuple of partial derivatives
-                partials = [sp.diff(expr, v) for v in free]
-                # Canonicalise each partial
-                partials = [_canonicalize_sympy(p, v, kind="differentiate") for p, v in zip(partials, free)]
-                # Format as a tuple
-                result_str = "(" + ", ".join(str(p) for p in partials) + ")"
-                return {"value": partials, "exact": result_str}
-            # v3.9.0: ODE solver
-            elif comp["kind"] == "ode":
-                # Parse "y' = f(x, y)" or "dy/dx = f(x, y)"
-                x_sym = sp.Symbol('x')
-                y = sp.Function('y')
-                # Parse the RHS
-                if '=' in clean_expr:
-                    parts = clean_expr.split('=', 1)
-                    rhs_str = parts[1].strip()
-                else:
-                    rhs_str = clean_expr.strip()
-                # Replace y with y(x) for SymPy's ODE solver
-                rhs_str = re.sub(r'\by\b', 'y(x)', rhs_str)
-                rhs = sp.sympify(rhs_str)
-                eq = sp.Eq(sp.diff(y(x_sym), x_sym), rhs)
-                result = sp.dsolve(eq, y(x_sym))
-                # Format the result string
-                result_str = str(result)
-                return {"value": result, "exact": result_str}
-            # v3.9.0: Taylor series
-            elif comp["kind"] == "taylor":
-                around = int(comp.get("around", "0"))
-                v = sp.Symbol(comp["var"])
-                series_result = sp.series(sp.sympify(clean_expr), v, around, n=5)
-                # sp.removeO doesn't exist; use the series' .removeO() method
-                try:
-                    result = series_result.removeO()
-                except Exception:
-                    result = series_result
-                return {"value": result, "exact": str(result) + " + O(" + comp["var"] + "^5)"}
-            # v3.9.0: Limit
-            elif comp["kind"] == "limit":
-                v = sp.Symbol(comp["var"])
-                point_str = comp.get("point", "0").strip().lower()
-                if point_str in ("infinity", "inf", "oo"):
-                    pt = sp.oo
-                else:
-                    try:
-                        pt = int(point_str)
-                    except ValueError:
-                        pt = sp.sympify(point_str)
-                result = sp.limit(sp.sympify(clean_expr), v, pt)
-                return {"value": result, "exact": str(result)}
-            # v3.9.0: Sum / series (symbolic)
-            elif comp["kind"] == "sum":
-                # Try to parse as a sum — fall back to simplification
-                result = sp.simplify(sp.sympify(clean_expr))
-                return {"value": result, "exact": str(result)}
-            else:
-                return {"value": None, "error": "Unknown kind", "exact": "N/A"}
-            return {"value": result, "exact": str(result)}
-        except Exception as e:
-            # Re-raise in debug mode; otherwise fall through to fallback
-            pass
-
-    # Fallback when sympy is not present or fails
+def evaluate_symbolic(req: Dict[str, Any]) -> Dict[str, Any]:
+    if not _HAS_SYMPY: return {'exact': 'N/A', 'native': False}
+    import re
+    kind = req['kind']
+    expr = req['expr']
+    var_str = req.get('var', 'x')
+    
+    # Standardize and Strip trailing dx/dy/dz
+    clean_expr = expr.replace('^', '**')
+    clean_expr = re.sub(r'\s*d[a-z]$', '', clean_expr)
+    clean_expr = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', clean_expr)
+    
     try:
-        expr = comp["expr"].strip()
-        kind = comp["kind"]
-        var = comp["var"]
-
-        if kind == "differentiate":
-            clean = expr
-            if clean in (f"{var}^2", f"{var}**2"):
-                res_str = f"2*{var}"
-                return {"value": res_str, "exact": res_str}
-            m = re.match(rf"(\d*)\*?{var}\^?(\d*)", clean)
-            if m:
-                coeff_str, power_str = m.groups()
-                coeff = int(coeff_str) if coeff_str else 1
-                power = int(power_str) if power_str else 1
-                new_coeff = coeff * power
-                new_power = power - 1
-                if new_power == 0:
-                    res_str = f"{new_coeff}"
-                elif new_power == 1:
-                    res_str = f"{new_coeff}*{var}"
-                else:
-                    res_str = f"{new_coeff}*{var}**{new_power}"
-                return {"value": res_str, "exact": res_str}
-
-        elif kind == "solve":
-            clean = expr
-            if clean in (f"{var}^2-4=0", f"{var}**2-4=0", f"{var}^2-4", f"{var}**2-4"):
-                res_str = "[-2, 2]"
-                return {"value": [-2, 2], "exact": res_str}
+        import sympy as sp
+        x = sp.Symbol(var_str)
+        s_expr = sp.sympify(clean_expr.replace(' ', ''))
+        if kind == 'integrate': res = sp.integrate(s_expr, x)
+        elif kind == 'differentiate': res = sp.diff(s_expr, x)
+        elif kind == 'expand': res = sp.expand(s_expr)
+        elif kind == 'factor': res = sp.factor(s_expr)
+        else: res = 'Unknown Operation'
+        return {'exact': str(res), 'native': False, 'trace': [f'{kind}({clean_expr})'], 'fingerprint': {}}
     except Exception as e:
-        return {"value": None, "error": str(e), "exact": "Error"}
-    return {"value": None, "error": "Evaluation failed", "exact": "N/A"}
-
-# ── 4. GROUNDING (Connecting Math to the Substrate) ────────────────────
+        return {'exact': f'Error: {e}', 'native': False}
 def ground_result(approx: float, vocab: Any) -> Optional[Tuple[str, Any]]:
     """Attempts to snap a numeric result to a known number-word in the vocab."""
     try:
