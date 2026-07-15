@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 
 interface AIProvider {
-  id: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all';
+  id: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all' | 'glm';
   name: string;
   description: string;
   type: 'cloud' | 'local';
@@ -12,9 +12,9 @@ interface AIProvider {
 }
 
 interface AIProviderSelectorProps {
-  selectedProvider: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all';
+  selectedProvider: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all' | 'glm';
   selectedModel: string;
-  onProviderChange: (provider: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all') => void;
+  onProviderChange: (provider: 'gemini' | 'ollama' | 'lm-studio' | 'gpt4all' | 'glm') => void;
   onModelChange: (model: string) => void;
   onCheckLocalLLM?: () => Promise<void>;
 }
@@ -36,6 +36,15 @@ export const AIProviderSelector: React.FC<AIProviderSelectorProps> = ({
       icon: '☁️',
       status: 'available',
       models: ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.5-flash-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview'],
+    },
+    {
+      id: 'glm',
+      name: 'GLM Reasoner',
+      description: 'Run queries through the Python GLM v3.7.3 Kernel in Pyodide',
+      type: 'local',
+      icon: '📐',
+      status: 'available',
+      models: ['GLM v3.7.3 (Grown)'],
     },
     {
       id: 'ollama',

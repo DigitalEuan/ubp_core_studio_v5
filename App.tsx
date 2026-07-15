@@ -49,7 +49,7 @@ export const App: React.FC = () => {
   const [mobileTab, setMobileTab] = useState<'chat' | 'workspace' | 'tools'>('chat');
 
   // AI Provider Selection
-  const [aiProvider, setAiProvider] = useState<'gemini' | 'ollama' | 'lm-studio' | 'gpt4all'>('gemini');
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'ollama' | 'lm-studio' | 'gpt4all' | 'glm'>('gemini');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.1-pro-preview');
   const [localLLMService, setLocalLLMService] = useState<LocalLLMService | null>(null);
   const [localLLMStatus, setLocalLLMStatus] = useState<'available' | 'unavailable' | 'checking'>('checking');
@@ -1116,6 +1116,86 @@ except Exception as e:
             responseText = res.text;
             thought = res.thought;
             groundingUrls = res.groundingUrls;
+        } else if (aiProvider === 'glm') {
+            if (!isPyodideReady) {
+                throw new Error("Cannot run GLM: Pyodide Kernel is not ready.");
+            }
+            if (glmStatus !== 'online') {
+                addConsoleLog('system', "GLM is offline. Triggering auto-boot...");
+                await bootGLMRuntime();
+            }
+
+            await pyodideService.writeFile('glm_query.txt', text);
+            addConsoleLog('system', `>>> Sending query to GLM Reasoner: "${text.substring(0, 50)}..."`);
+
+            const chatCode = `
+import os
+import sys
+
+# Setup global monkey-patch for os.chdir to redirect non-existent local paths to /home/pyodide
+if not hasattr(os, '_patched_for_ubp'):
+    original_chdir = os.chdir
+    def patched_chdir(path):
+        try:
+            original_chdir(path)
+        except Exception:
+            original_chdir('/home/pyodide')
+    os.chdir = patched_chdir
+    os._patched_for_ubp = True
+
+os.environ['UBP_CORE_PATH'] = '/home/pyodide'
+if '/home/pyodide' not in sys.path:
+    sys.path.insert(0, '/home/pyodide')
+
+try:
+    with open('glm_query.txt', 'r') as f:
+        query = f.read()
+    
+    if 'glm_rt' not in globals():
+        # Clear module cache to ensure we load latest file content
+        for k in list(sys.modules.keys()):
+            if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
+                sys.modules.pop(k, None)
+        from GLM11_runtime import GLMRuntimeV37
+        globals()['glm_rt'] = GLMRuntimeV37()
+        
+    rt = globals()['glm_rt']
+    
+    mode = "${glmChatMode}"
+    ticks = ${glmEffortTicks}
+    
+    if mode == 'effort':
+        response = rt.chat_with_effort(query, max_ticks=ticks)
+    else:
+        response = rt.chat(query)
+        
+    print("RESPONSE_START")
+    print(response)
+    print("RESPONSE_END")
+except Exception as e:
+    import traceback
+    print(f"CHAT_ERR: {e}\\n{traceback.format_exc()}")
+`;
+            const res = await pyodideService.runPython(chatCode);
+            if (res.stdout) {
+                const match = res.stdout.match(/RESPONSE_START\s*([\s\S]*?)\s*RESPONSE_END/);
+                if (match && match[1]) {
+                    responseText = match[1].trim();
+                    const lines = responseText.split('\n');
+                    const traceLines = lines.filter(l => l.startsWith('[deliberated') || l.startsWith('[method') || l.startsWith('[step') || l.includes('deliberated:'));
+                    if (traceLines.length > 0) {
+                        thought = traceLines.join('\n');
+                    }
+                    addConsoleLog('stdout', responseText);
+                } else if (res.stdout.includes("CHAT_ERR")) {
+                    throw new Error(res.stdout);
+                } else {
+                    throw new Error("No response delimiter returned from GLM runtime.");
+                }
+            } else {
+                throw new Error(res.error || res.stderr || "Empty output from GLM run.");
+            }
+            await updateGLMStates();
         } else {
              if (!localLLMService) throw new Error("Local LLM not ready");
              const history = chatMessages.map(m => ({ role: m.role, content: m.content }));
