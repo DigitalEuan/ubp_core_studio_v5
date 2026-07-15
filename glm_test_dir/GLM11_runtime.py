@@ -23,6 +23,58 @@ from GLM17_semantic_frames import generate_explanation, verbalise_backbone  # v3
 from GLM18_hex_colour import idea_signature, word_to_colour  # v3.9.0
 from GLM00_config import KB_SYSTEM_PATH
 
+
+# --- DYNAMIC LEARNING HELPERS ---
+from dataclasses import dataclass
+from typing import List, Dict
+
+@dataclass
+class WordMath:
+    layer: str
+    arm: str
+    category: str
+    phase: int
+    word: str = ""
+
+    @property
+    def octant(self) -> int:
+        lm = {'Reality': 0, 'Information': 1, 'Activation': 2, 'Potential': 3}
+        return (lm[self.layer] << 1) | (0 if self.arm == 'det' else 1)
+
+def geometricize_word(word: str) -> dict:
+    if not word: return {"word": "", "layer": "Entropy", "arm": "sto", "category": "Concept"}
+    w = word.lower()
+    if w in ["then", "and", "with", "due_to", "therefore"]:
+        cat, layer, arm = "Connective", "Activation", "sto"
+    elif w.endswith("s") or w.endswith("ed") or w.endswith("ing"):
+        cat, layer, arm = "Action", "Information", "sto"
+    elif w.endswith("ity") or w.endswith("ness") or w in ["gravity", "blue", "hot", "cold"]:
+        cat, layer, arm = "State", "Potential", "sto"
+    elif word[0].isupper():
+        cat, layer, arm = "Object", "Reality", "det"
+    else:
+        cat, layer, arm = "Mass", "Reality", "sto"
+    return {"word": word, "layer": layer, "arm": arm, "category": cat}
+
+def encode_semantic_octad(wm: WordMath) -> List[int]:
+    from GLM01_substrate import GOLAY_ENGINE
+    bits = [0] * 12
+    octant = wm.octant
+    for i in range(3): bits[i] = (octant >> i) & 1
+    cat_map = {'Person': 0, 'Object': 1, 'Action': 2, 'Concept': 3, 
+               'Mass': 4, 'Connective': 5, 'Metadata': 6, 'State': 7}
+    cat_idx = cat_map.get(wm.category, 0)
+    for i in range(3): bits[3 + i] = (cat_idx >> i) & 1
+    for i in range(3): bits[6 + i] = (wm.phase >> i) & 1
+    w = wm.word.lower()
+    bits[9] = (len(w) % 4) & 1
+    bits[10] = sum(1 for c in w if c in 'aeiou') % 2
+    bits[11] = len(w) % 2
+    base_cw = GOLAY_ENGINE.encode(bits)
+    all_octads = GOLAY_ENGINE.get_octads()
+    return min(all_octads, key=lambda oct: sum(a != b for a, b in zip(base_cw, oct)))
+# --------------------------------
+
 class GLMRuntimeV37:
     def __init__(self, auto_expand: bool = True):
         self._last_compute = None
@@ -327,7 +379,22 @@ class GLMRuntimeV37:
             tokens = re.findall(r"\b[a-z_]+\b", resolved.lower())
         content = [(t, self.vocab_dict[t]) for t in tokens
                    if t in self.vocab_dict and t not in FUNCTION_WORDS]
-        unknown = [t for t in tokens if t not in self.vocab_dict and t not in FUNCTION_WORDS]
+        unknown_raw = [t for t in tokens if t not in self.vocab_dict and t not in FUNCTION_WORDS]
+        unknown = []
+        for u in unknown_raw:
+            from GLM01_substrate import LEECH_ENGINE, BLA, WordEntry, _get_mog_category
+            tag = geometricize_word(u)
+            wm = WordMath(tag["layer"], tag["arm"], tag["category"], len(content), u)
+            vec = encode_semantic_octad(wm)
+            nrci = float(LEECH_ENGINE.calculate_nrci(vec))
+
+            self.vocab_dict[u] = WordEntry(
+                word=u, vector=vec, role="NOUN", ubp_id=f"LEARNED_{u.upper()}",
+                nrci=nrci, golay_codeword=vec, fold3=BLA.fold24_to3(vec),
+                mog_category=_get_mog_category(vec)
+            )
+            content.append((u, self.vocab_dict[u]))
+            print(f"\n[GLM Runtime] Dynamically learned new word: '{u}' as {tag['category']}")
 
         # 5. Warm-start check (before update)
         if content:
@@ -833,3 +900,24 @@ class GLMRuntimeV37:
             return {"error": "could not construct sentence"}
         except Exception as e:
             return {"error": str(e)}
+
+    def generate_from_math(self, target_sequence: List[str]) -> List[str]:
+        """Generates a sentence from a sequence of mathematical categories."""
+        generated = []
+        for i, target_cat in enumerate(target_sequence):
+            target_wm = WordMath("Information", "sto", target_cat, i, "placeholder")
+            target_vec = encode_semantic_octad(target_wm)
+
+            best_word, best_dist = "unknown", 999
+            for w, entry in self.vocab_dict.items():
+                if not w or not isinstance(w, str): continue
+                if not hasattr(entry, 'vector') or not entry.vector: continue
+                w_tag = geometricize_word(w)
+                if w_tag["category"] != target_cat: continue
+
+                dist = sum(a != b for a, b in zip(target_vec, entry.vector))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_word = w
+            generated.append(best_word)
+        return generated

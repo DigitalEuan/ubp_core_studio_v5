@@ -372,6 +372,48 @@ class WordEntry:
     hamming_to_system: int = 0; golay_codeword: List[int] = field(default_factory=list)
     golay_distance: int = 0; fold3: List[int] = field(default_factory=list)
     mog_category: str = "I_Topology"; macro_nrci: float = 0.0
+    domain_coh: float = 1.0
+    lock_pressure: float = 1.0
+    is_ghost: bool = False
+
+    def __post_init__(self):
+        if not self.golay_codeword and self.vector:
+            self.golay_codeword = self.vector
+        if self.golay_codeword and len(self.golay_codeword) == 24:
+            # 1. Map MOG Category to Geometric Domain
+            dom_key = "SUBSTANCE"
+            if self.mog_category.startswith("M_"): dom_key = "SUBSTANCE"
+            elif self.mog_category.startswith("I_"): dom_key = "ALGORITHM"
+            elif self.mog_category.startswith("A_"): dom_key = "MECHANISM"
+            elif self.mog_category.startswith("P_"): dom_key = "ORGANISM"
+
+            # 2. Calculate Domain Coherence (Sextet Parity)
+            target = {"SUBSTANCE": [4, 2, 2, 0], "ORGANISM": [3, 3, 3, 1], "ALGORITHM": [1, 3, 4, 2], "MECHANISM": [4, 4, 2, 0]}.get(dom_key, [2,2,2,2])
+            actual = [sum(self.golay_codeword[i:i+6]) for i in range(0, 24, 6)]
+            dev = sum(abs(t - a) for t, a in zip(target, actual))
+            self.domain_coh = max(0.0, 1.0 - (dev / 24.0))
+
+            # 3. Calculate Lock Pressure & Ghost Filter (Phase 4)
+            try:
+                from ubp_unified_v5 import _Y
+                y_val = float(_Y)
+            except:
+                y_val = 0.2646734093
+
+            # LAW_SCALE_SCAFFOLDING_085: Spine Check
+            mag = sum(v << i for i, v in enumerate(self.golay_codeword[:8]))
+
+            if mag == 85:
+                self.lock_pressure = 0.2115
+                self.is_ghost = False
+            elif self.domain_coh < 0.5:
+                # LAW_TOPOLOGICAL_TENACITY_001: Ghost Filter
+                self.lock_pressure = 0.0
+                self.is_ghost = True
+            else:
+                # Standard Topological Mass
+                self.lock_pressure = self.nrci * y_val * self.domain_coh
+                self.is_ghost = False
 
 def _get_mog_category(vector):
     """v3.7.7: proper quadrant-based MOG category derivation."""
@@ -535,20 +577,60 @@ _PRIORITY_VOCAB = [
     ("critical","ADJECTIVE","P_Limit"),
 ]
 
-def _derive_vector(word, mog_cat):
-    """Derive a deterministic 24-bit vector from word hash + MOG category.
+def _encode_12bit_intent(word: str, mog_cat: str) -> List[int]:
+    bits = [0] * 12
 
-    v3.10.0: Now snaps to the nearest Golay codeword using the REAL
-    GolayCodeEngine.  This ensures every priority-vocab vector is an
-    actual lattice point in Λ₂₄, not just a random hash."""
-    h = hashlib.sha256(word.lower().encode()).digest()
-    bits = [(byte >> k) & 1 for byte in h for k in range(7, -1, -1)][:24]
+    # 1. Octant (Bits 0-2)
+    # Map MOG_CATEGORIES to 8 octants
     cat_idx = MOG_CATEGORIES.index(mog_cat) if mog_cat in MOG_CATEGORIES else 6
-    cat_sig = [0] * 24
-    cat_sig[cat_idx % 24] = 1
-    raw_vec = [bits[i] ^ cat_sig[i] for i in range(24)]
-    # v3.10.0: Snap to nearest Golay codeword (real error correction)
-    snapped, meta = GOLAY_ENGINE.snap_to_codeword(raw_vec)
+    octant = cat_idx % 8
+    for i in range(3): bits[i] = (octant >> i) & 1
+
+    # 2. k-clock (Bits 3-5)
+    # Deterministic from word hash
+    h = int(hashlib.sha256(word.lower().encode()).hexdigest(), 16)
+    k_idx = (h % 8)
+    for i in range(3): bits[3 + i] = (k_idx >> i) & 1
+
+    # 3. UBP Constants C (Bits 6-9)
+    c_idx = (h >> 3) % 16
+    for i in range(4): bits[6 + i] = (c_idx >> i) & 1
+
+    # 4. Orthographic hashes (Bits 10-11)
+    w = word.lower()
+    bits[10] = len(w) % 2
+    bits[11] = sum(1 for c in w if c in 'aeiou') % 2
+
+    return bits
+
+def _apply_entropic_wobble(codeword: List[int], word: str) -> List[int]:
+    vec = list(codeword)
+    w = word.lower()
+    if w and w[0] in 'aeiou':
+        vec[0] ^= 1
+    if len(w) > 6:
+        vec[12] ^= 1
+    return vec
+
+def _derive_vector(word, mog_cat):
+    """Phase 1: 12-Bit Noumenal Encoder"""
+    # 1. Generate 12-bit intent
+    intent = _encode_12bit_intent(word, mog_cat)
+
+    # 2. Manifest via Golay Generator Matrix
+    perfect_codeword = GOLAY_ENGINE.encode(intent)
+
+    # 3. Apply Entropic Wobble
+    vec = _apply_entropic_wobble(perfect_codeword, word)
+
+    # 4. Decode / Snap
+    snapped, meta = GOLAY_ENGINE.snap_to_codeword(vec)
+    n_errors = meta.get('anchor_distance', 0)
+
+    # Rule: If Chaotic (n_errors > 3 or uncorrectable), fallback to perfect codeword
+    if not meta.get('correctable', True) or n_errors > 3:
+        return perfect_codeword
+
     return snapped
 
 def _inject_priority_vocab(words):
