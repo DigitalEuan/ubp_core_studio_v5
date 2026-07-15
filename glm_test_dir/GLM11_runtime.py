@@ -57,22 +57,35 @@ def geometricize_word(word: str) -> dict:
     return {"word": word, "layer": layer, "arm": arm, "category": cat}
 
 def encode_semantic_octad(wm: WordMath) -> List[int]:
-    from GLM01_substrate import GOLAY_ENGINE
-    bits = [0] * 12
-    octant = wm.octant
-    for i in range(3): bits[i] = (octant >> i) & 1
-    cat_map = {'Person': 0, 'Object': 1, 'Action': 2, 'Concept': 3, 
-               'Mass': 4, 'Connective': 5, 'Metadata': 6, 'State': 7}
-    cat_idx = cat_map.get(wm.category, 0)
-    for i in range(3): bits[3 + i] = (cat_idx >> i) & 1
-    for i in range(3): bits[6 + i] = (wm.phase >> i) & 1
-    w = wm.word.lower()
-    bits[9] = (len(w) % 4) & 1
-    bits[10] = sum(1 for c in w if c in 'aeiou') % 2
-    bits[11] = len(w) % 2
-    base_cw = GOLAY_ENGINE.encode(bits)
-    all_octads = GOLAY_ENGINE.get_octads()
-    return min(all_octads, key=lambda oct: sum(a != b for a, b in zip(base_cw, oct)))
+    """v10.1 High-Resolution Constrained Lattice Snap"""
+    from GLM01_substrate import GOLAY_ENGINE, vector_to_hex_int, fast_hamming
+
+    # Target Dominant Sextet for each Domain
+    DOMAINS = {"SUBSTANCE": 0, "ALGORITHM": 1, "ORGANISM": 2, "MECHANISM": 3}
+    target_idx = DOMAINS.get(wm.category.upper(), 2) # Default to Activation/Organism
+    if wm.layer == "Reality": target_idx = 0
+    elif wm.layer == "Information": target_idx = 1
+    elif wm.layer == "Activation": target_idx = 2
+    elif wm.layer == "Potential": target_idx = 3
+
+    # Create unique 24-bit seed from word
+    h = hashlib.sha256(wm.word.lower().encode()).digest()
+    seed_bits = [(byte >> k) & 1 for byte in h for k in range(7, -1, -1)][:24]
+    seed_hex = vector_to_hex_int(seed_bits)
+
+    all_codewords = GOLAY_ENGINE.get_all_codewords()
+    best_cw, best_dist = None, 999
+
+    for cw in all_codewords:
+        sextets = [sum(cw[i:i+6]) for i in range(0, 24, 6)]
+        if sextets.index(max(sextets)) != target_idx:
+            continue
+        dist = fast_hamming(seed_hex, vector_to_hex_int(cw))
+        if dist < best_dist:
+            best_dist, best_cw = dist, list(cw)
+            if dist == 0: break
+
+    return best_cw or [0]*24
 # --------------------------------
 
 class GLMRuntimeV37:
@@ -921,3 +934,12 @@ class GLMRuntimeV37:
                     best_word = w
             generated.append(best_word)
         return generated
+
+
+    def save_learned_state(self, filepath='glm_learned_vocabulary.json'):
+        """Saves all dynamically learned words to a persistent file."""
+        learned = {k: {"vector": v.vector, "definition": getattr(v, 'definition', ''), "ubp_id": v.ubp_id} 
+                   for k, v in self.vocab_dict.items() if "LEARNED_" in v.ubp_id or "ABSORBED_" in v.ubp_id}
+        with open(filepath, 'w') as f:
+            json.dump(learned, f, indent=2)
+        print(f"✅ Saved {len(learned)} learned words to {filepath}")

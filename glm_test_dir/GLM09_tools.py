@@ -545,7 +545,9 @@ def evaluate_numeric(comp: Dict[str, Any]) -> Dict[str, Any]:
         val = abs(a * b) // math.gcd(a, b) if a and b else 0
         return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
-    if kind == "gcd":
+    if kind == "modulo":
+        pass # Handled in ALU
+    elif kind == "gcd":
         a, b = comp["operands"]
         if _NATIVE_OK:
             try:
