@@ -313,6 +313,14 @@ def detect_compute(query: str) -> Optional[Dict[str, Any]]:
     if m:
         return {"kind": "trace", "expr": m.group(1), "matrix_str": m.group(1)}
 
+    # v3.25: Modulo detection (FIXED — was missing detector entirely)
+    _MOD_RE = re.compile(r'\b(-?\d+)\s*(?:mod(?:ulo)?)\s*(-?\d+)\b', re.I)
+    _MOD_PCT_RE = re.compile(r'\b(-?\d+)\s*%\s*(-?\d+)\b')
+    m = _MOD_RE.search(q)
+    if m: return {"kind":"modulo", "expr":f"{m.group(1)} mod {m.group(2)}", "operands":[int(m.group(1)), int(m.group(2))]}
+    m = _MOD_PCT_RE.search(q)
+    if m: return {"kind":"modulo", "expr":f"{m.group(1)} mod {m.group(2)}", "operands":[int(m.group(1)), int(m.group(2))]}
+
     # v3.7.7: Primality detection (extended in v3.8.0)
     m = _PRIME_RE.search(q)
     if m: return {"kind":"prime", "expr":f"isprime({m.group(1)})", "operands":[int(m.group(1))]}
@@ -546,7 +554,12 @@ def evaluate_numeric(comp: Dict[str, Any]) -> Dict[str, Any]:
         return {"value": val, "exact": str(val), "approx": float(val), "native": False}
 
     if kind == "modulo":
-        pass # Handled in ALU
+        # FIXED (Round 4): Actually compute modulo instead of `pass`
+        a, b = comp["operands"]
+        if b == 0:
+            return {"value": None, "exact": "undefined", "approx": 0.0, "native": False, "error": "modulo by zero"}
+        val = a % b
+        return {"value": val, "exact": str(val), "approx": float(val), "native": False}
     elif kind == "gcd":
         a, b = comp["operands"]
         if _NATIVE_OK:
@@ -651,52 +664,155 @@ def _wrap_native(r, value_override=None, exact_override=None,
 
 # ── 3. SYMBOLIC DETECTION & EVALUATION ─────────────────────────────────
 def detect_symbolic(query: str) -> Optional[Dict[str, Any]]:
-    import re
-    q = _strip_math_delimiters(query).strip()
-    q_clean = re.sub(r'^(what is|calculate|solve|evaluate|compute|find|can you|please)\s+', '', q, flags=re.I)
-    
-    # A. Integration (Prioritize dx notation)
-    m_int_dx = re.search(r'(?:integrate|integral of|integral)\s+(.*?)\s*d([a-z])\b', q_clean, re.I)
+    """Detects if a query contains a symbolic math operation.
+
+    FIXED (Round 4): Merges the user's new expand/factor/integrate-dx detectors
+    with the v3.24 solve/simplify/ODE/partial_diff/gradient/taylor/limit/sum
+    detectors that were accidentally dropped in the rewrite.
+
+    Fixes applied:
+      - Expand regex: now captures full parenthesized expressions (was capturing
+        'x+1)**2' instead of '(x+1)**2' due to optional-paren regex bug)
+      - Factor regex: now uses word boundary \\bfactor to avoid matching
+        'factorial' (was false-positiving on '3! (factorial of 3)')
+      - Solve/Simplify: restored from v3.24 pre-compiled patterns
+      - ODE/Partial/Gradient/Taylor/Limit/Sum: restored from v3.24
+    """
+    q = _strip_math_delimiters(query).strip().replace('`', '')
+
+    # A. ODE (check FIRST — before solve, since "solve the ODE" would match solve)
+    m = _ODE_RE.search(q)
+    if m: return {"kind": "ode", "expr": m.group(1).strip(), "var": "x"}
+    m = _ODE_DYDX_RE.search(q)
+    if m: return {"kind": "ode", "expr": "y' = " + m.group(1).strip(), "var": "x"}
+    m = _ODE_PRIME_RE.search(q)
+    if m: return {"kind": "ode", "expr": "y' = " + m.group(1).strip(), "var": "x"}
+
+    # B. Integration — prioritize dx notation (user's new detector, works well)
+    m_int_dx = re.search(r'(?:integrate|integral of|integral)\s+(.*?)\s*d([a-z])\b', q, re.I)
     if m_int_dx:
         return {'kind': 'integrate', 'expr': m_int_dx.group(1).strip(), 'var': m_int_dx.group(2)}
-    
-    # B. Expand
-    m_exp = re.search(r'expand\s*\(?(.*?)\)?$', q_clean, re.I)
-    if m_exp: return {'kind': 'expand', 'expr': m_exp.group(1)}
-    
-    # C. Factor
-    m_fac = re.search(r'factor(?:ize)?\s*\(?(.*?)\)?$', q_clean, re.I)
-    if m_fac: return {'kind': 'factor', 'expr': m_fac.group(1)}
-    
-    # D. Differentiate
-    m_diff = re.search(r'(?:differentiate|derivative of|d/dx)\s+(.+?)(?:\s+with respect to\s+(\w+))?(?:[\?\.]|$)', q_clean, re.I)
-    if m_diff: return {'kind': 'differentiate', 'expr': m_diff.group(1), 'var': m_diff.group(2) or 'x'}
-    
+    # Fall back to the v3.24 integrate detector (handles "with respect to x")
+    m = _INTEGRATE_RE.search(q)
+    if m: return {"kind": "integrate", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
+
+    # C. Differentiate (user's new detector, merged with v3.24 pattern)
+    m = _DIFF_RE.search(q)
+    if m: return {"kind": "differentiate", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
+
+    # D. Expand — FIXED regex: capture everything after 'expand', strip outer parens
+    #    Old bug: `expand\s*\(?(.*?)\)?$` made parens optional so it captured
+    #    'x+1)**2' (missing opening paren). Fix: capture raw, strip parens later.
+    m_exp = re.search(r'\bexpand\s+(.+?)(?:[\?\.]|$)', q, re.I)
+    if m_exp:
+        expr = m_exp.group(1).strip().rstrip('.')
+        # Strip outer parens if present: "(x+1)^2" -> "x+1)^2" was the bug;
+        # now we capture "(x+1)^2" and strip to "(x+1)^2" (keep parens for sympify)
+        return {'kind': 'expand', 'expr': expr, 'var': 'x'}
+
+    # E. Factor — FIXED regex: word boundary to avoid matching 'factorial'
+    #    Old bug: `factor(?:ize)?` matched 'factor' in 'factorial'.
+    #    Fix: use \bfactor(?:ize)?\b to require word boundary.
+    m_fac = re.search(r'\bfactor(?:ize)?\s+(.+?)(?:[\?\.]|$)', q, re.I)
+    if m_fac:
+        expr = m_fac.group(1).strip().rstrip('.')
+        return {'kind': 'factor', 'expr': expr, 'var': 'x'}
+
+    # F. Simplify (restored from v3.24)
+    m = _SIMPLIFY_RE.search(q)
+    if m: return {"kind": "simplify", "expr": m.group(1).strip(), "var": "x"}
+
+    # G. Solve (restored from v3.24)
+    m = _SOLVE_RE.search(q)
+    if m: return {"kind": "solve", "expr": m.group(1).strip(), "var": m.group(2) or "x"}
+
+    # H. Partial derivative (restored from v3.24)
+    m = _PARTIAL_DIFF_RE.search(q)
+    if m: return {"kind": "partial_diff", "expr": m.group(1).strip(), "var": m.group(2).strip()}
+
+    # I. Gradient (restored from v3.24)
+    m = _GRADIENT_RE.search(q)
+    if m: return {"kind": "gradient", "expr": m.group(1).strip(), "var": "x"}
+
+    # J. Taylor series (restored from v3.24)
+    m = _TAYLOR_RE2.search(q)
+    if m: return {"kind": "taylor", "expr": m.group(1).strip(), "var": "x", "around": m.group(2)}
+    m = _TAYLOR_RE.search(q)
+    if m: return {"kind": "taylor", "expr": m.group(1).strip(), "var": m.group(2) or "x", "around": m.group(3) or "0"}
+
+    # K. Limit (restored from v3.24)
+    m = _LIMIT_RE.search(q)
+    if m: return {"kind": "limit", "expr": m.group(1).strip(), "var": m.group(2).strip(), "point": m.group(3).strip()}
+
+    # L. Sum / series (restored from v3.24)
+    m = _SERIES_RE.search(q)
+    if m: return {"kind": "sum", "expr": m.group(1).strip(), "var": "x"}
+
     return None
+
 def evaluate_symbolic(req: Dict[str, Any]) -> Dict[str, Any]:
+    """Evaluates a symbolic math operation.
+
+    FIXED (Round 4): Added solve and simplify cases (were missing in the user's
+    rewrite). Kept the user's integrate/expand/factor/differentiate cases.
+    Also handles the expression cleaning more robustly.
+    """
     if not _HAS_SYMPY: return {'exact': 'N/A', 'native': False}
     import re
     kind = req['kind']
     expr = req['expr']
     var_str = req.get('var', 'x')
-    
-    # Standardize and Strip trailing dx/dy/dz
+
+    # Standardize: ^ -> **, strip trailing dx/dy/dz, implicit multiplication
     clean_expr = expr.replace('^', '**')
     clean_expr = re.sub(r'\s*d[a-z]$', '', clean_expr)
     clean_expr = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', clean_expr)
-    
+    # Strip trailing punctuation
+    clean_expr = clean_expr.rstrip('.?').strip()
+
     try:
         import sympy as sp
         x = sp.Symbol(var_str)
-        s_expr = sp.sympify(clean_expr.replace(' ', ''))
-        if kind == 'integrate': res = sp.integrate(s_expr, x)
-        elif kind == 'differentiate': res = sp.diff(s_expr, x)
-        elif kind == 'expand': res = sp.expand(s_expr)
-        elif kind == 'factor': res = sp.factor(s_expr)
-        else: res = 'Unknown Operation'
+
+        # FIXED: sympify AFTER kind-specific handling, because solve needs
+        # to split on '=' before sympify (sympify can't parse "x+3=10")
+        if kind == 'solve':
+            # For solve, the expression should be an equation like "x+3=10"
+            # Split on '=' and solve lhs - rhs = 0
+            if '=' in clean_expr:
+                lhs, rhs = clean_expr.split('=', 1)
+                eq = sp.sympify(lhs.replace(' ', '')) - sp.sympify(rhs.replace(' ', ''))
+                res = sp.solve(eq, x)
+            else:
+                s_expr = sp.sympify(clean_expr.replace(' ', ''))
+                res = sp.solve(s_expr, x)
+        else:
+            s_expr = sp.sympify(clean_expr.replace(' ', ''))
+            if kind == 'integrate':
+                res = sp.integrate(s_expr, x)
+            elif kind == 'differentiate':
+                res = sp.diff(s_expr, x)
+            elif kind == 'expand':
+                res = sp.expand(s_expr)
+            elif kind == 'factor':
+                res = sp.factor(s_expr)
+            elif kind == 'simplify':
+                res = sp.simplify(s_expr)
+            elif kind == 'limit':
+                point = req.get('point', '0')
+                pt = sp.oo if point in ('infinity', 'inf', 'oo') else sp.sympify(point)
+                res = sp.limit(s_expr, x, pt)
+            elif kind == 'taylor':
+                around = req.get('around', '0')
+                ar = sp.sympify(around)
+                res = sp.series(s_expr, x, ar, n=6)
+            else:
+                res = 'Unknown Operation'
+
         return {'exact': str(res), 'native': False, 'trace': [f'{kind}({clean_expr})'], 'fingerprint': {}}
     except Exception as e:
         return {'exact': f'Error: {e}', 'native': False}
+
 def ground_result(approx: float, vocab: Any) -> Optional[Tuple[str, Any]]:
     """Attempts to snap a numeric result to a known number-word in the vocab."""
     try:
