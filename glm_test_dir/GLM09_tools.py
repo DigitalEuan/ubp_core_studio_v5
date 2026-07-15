@@ -269,7 +269,7 @@ def _parse_matrix(s: str) -> Optional[List[List[float]]]:
         # Fallback: manual parse
         import json
         # Try to make it JSON-compatible
-        s = s.replace(' ', '')
+        s = s
         return json.loads(s)
     except Exception:
         return None
@@ -903,7 +903,7 @@ def evaluate_symbolic(comp: Dict[str, Any]) -> Dict[str, Any]:
         var = comp["var"]
 
         if kind == "differentiate":
-            clean = expr.replace(' ', '')
+            clean = expr
             if clean in (f"{var}^2", f"{var}**2"):
                 res_str = f"2*{var}"
                 return {"value": res_str, "exact": res_str}
@@ -923,7 +923,7 @@ def evaluate_symbolic(comp: Dict[str, Any]) -> Dict[str, Any]:
                 return {"value": res_str, "exact": res_str}
 
         elif kind == "solve":
-            clean = expr.replace(' ', '')
+            clean = expr
             if clean in (f"{var}^2-4=0", f"{var}**2-4=0", f"{var}^2-4", f"{var}**2-4"):
                 res_str = "[-2, 2]"
                 return {"value": [-2, 2], "exact": res_str}
