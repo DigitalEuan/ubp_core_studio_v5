@@ -29,7 +29,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from collections import Counter
 import numpy as np
 
-from GLM00_config import UBP_CORE_PATH, get_master_resource_path
+from GLM00_config import UBP_CORE_PATH
 from GLM01_substrate import (
     WordEntry, BLA, GOLAY_ENGINE, LEECH_ENGINE, _get_mog_category,
     vector_to_hex_int,
@@ -42,7 +42,7 @@ def build_corpus() -> Tuple[List[str], Dict[str, str]]:
 
     Returns (tokens, word_definitions).
     """
-    path = get_master_resource_path()
+    path = UBP_CORE_PATH / "glm_master_resource_v1.json"
     if not path.exists():
         return [], {}
     with open(path) as f:
@@ -217,7 +217,7 @@ def inject_svd_vocab(words: dict) -> dict:
 def svd_vocab_status() -> dict:
     """Report SVD vocab status without building it."""
     return {
-        "available": get_master_resource_path().exists(),
+        "available": UBP_CORE_PATH.exists() and (UBP_CORE_PATH / "glm_master_resource_v1.json").exists(),
         "cached": _svd_cache is not None,
         "cache_size": len(_svd_cache) if _svd_cache else 0,
     }

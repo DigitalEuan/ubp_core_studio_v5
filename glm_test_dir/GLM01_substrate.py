@@ -192,12 +192,29 @@ EDGE_LABELS: Set[str] = {
     "lattice_adjacent", "lattice_adjacent_1", "lattice_adjacent_2",
     "lattice_adjacent_3", "lattice_adjacent_4", "lattice_adjacent_5",
     "auto_proposed", "contradicts", "incompatible_with",
-    # v3.17.0: added "co_occurs" so ContinuousLearner's _check_for_new_edges
-    # and _load_learned_edges can actually add/re-apply learned edges. The
-    # original code called crg.add_edge(..., "co_occurs", ...) but the label
-    # was silently rejected, so learned CRG edges were never added to the
-    # live graph — a fourth bug beyond the three in SESSION_SUMMARY §5.
     "co_occurs",
+    # Expanded CRG labels for natural language generation
+    "contains", "transforms", "mediates", "characterizes",
+    "quantifies", "constrains", "preserves", "violates",
+    "opposes", "stores", "carries", "emits", "absorbs",
+    "binds", "pairs", "condenses", "orders", "localizes",
+    "protects", "corrects", "encodes", "decodes", "sums",
+    "integrates", "decomposes", "generalizes", "abstracts",
+    "maps", "acts_on", "sources", "curves", "attracts",
+    "deflects", "flows", "transfers", "converts", "combines",
+    "separates", "approaches", "diverges", "converges",
+    "oscillates", "resonates", "interferes", "tunnels",
+    "scatters", "implies", "follows", "precedes", "accompanies",
+    "exhibits", "undergoes", "transitions", "excites",
+    "annihilates", "dominates", "renormalizes", "regularizes",
+    "quantizes", "charges", "obeys", "requires", "minimizes",
+    "maximizes", "averages", "fluctuates", "propagates",
+    "rotates", "translates", "reflects", "expands", "contracts",
+    "stretches", "accelerates", "decelerates", "clusters",
+    "grows", "seeds", "records", "connects", "appears",
+    "implements", "unifies", "drives", "governs", "produces",
+    "bends", "redshifts", "delays", "waves", "curved_by",
+    "equation", "predicted", "creates", "governed_by", "caused_by",
 }
 
 @dataclass

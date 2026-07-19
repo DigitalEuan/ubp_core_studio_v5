@@ -146,8 +146,6 @@ def compose_response(
     # v3.19.0: new kwargs for answer extraction + verification
     answer_block: Optional[Any] = None,
     verified: Optional[str] = None,
-    # v3.22.0: new kwargs for ontological grammar generation
-    generated: Optional[str] = None,
 ) -> str:
     """Weaves internal state into a coherent multi-layered response."""
     
@@ -260,10 +258,6 @@ def compose_response(
                 parts.append(ver_str)
         except Exception:
             pass
-
-    # v3.22.0: [Generated] block — ontological grammar generation
-    if generated is not None:
-        parts.append(f"[Generated] {generated}")
 
     # K. Fallback
     if not parts:
