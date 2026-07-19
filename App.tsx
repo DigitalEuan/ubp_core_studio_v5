@@ -253,16 +253,32 @@ export const App: React.FC = () => {
                     );
                 } else if (relativePath === 'GLM10_response_composer.py') {
                     // Accept recalled argument
-                    content = content.replace(
-                        'deliberation: Optional[Dict] = None # <--- ADDED',
-                        'deliberation: Optional[Dict] = None, recalled: Optional[List] = None'
-                    );
+                    if (!content.includes('recalled: Optional[List')) {
+                        content = content.replace(
+                            'deliberation: Optional[Dict] = None # <--- ADDED',
+                            'deliberation: Optional[Dict] = None, recalled: Optional[List] = None'
+                        );
+                    }
                     
                     if (!content.includes('if recalled:')) {
                         content = content.replace(
                             '    return "  ".join(parts)',
                             '    if recalled:\n        parts.append(f"[Recall] {recalled}")\n    return "  ".join(parts)'
                         );
+                    }
+
+                    // v3.25.0: Add generated parameter (GLM35 ParagraphComposer output)
+                    if (!content.includes('generated: Optional[')) {
+                        content = content.replace(
+                            'verified: Optional[str] = None,\n) -> str:',
+                            'verified: Optional[str] = None,\n    # v3.25.0: GLM35 ParagraphComposer generated paragraph\n    generated: Optional[str] = None,\n) -> str:'
+                        );
+                        if (!content.includes('[Generated]')) {
+                            content = content.replace(
+                                '    # K. Fallback',
+                                '    # K. v3.25.0: GLM35 ParagraphComposer generated paragraph\n    if generated:\n        parts.append(f"[Generated] {generated}")\n\n    # L. Fallback'
+                            );
+                        }
                     }
                 }
 
@@ -775,6 +791,7 @@ if '/home/pyodide' not in sys.path:
                 'GLM24_continuous_learner.py', 'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py',
                 'GLM28_native_poly.py', 'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py',
                 'GLM32_mode_algebra.py', 'GLM33_considered_response.py', 'GLM34_simplicial_crg.py',
+                'GLM35_paragraph_composer.py',
                 'test_v321_levelling.py', 'golden_cases.json', 'run_golden_cases.py',
                 'glm_unified_resource.json', 'glm_master_resource_v1.json'
             ];
@@ -1156,6 +1173,15 @@ try:
         for k in list(sys.modules.keys()):
             if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
                 sys.modules.pop(k, None)
+        # Ensure ubp_unified_v5.py is available
+        import os as _os
+        _ubp_path = _os.path.join('/home/pyodide', 'ubp_unified_v5.py')
+        if not _os.path.exists(_ubp_path):
+            try:
+                import urllib.request as _urllib
+                _urllib.urlretrieve('https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py', _ubp_path)
+            except Exception:
+                pass
         from GLM11_runtime import GLMRuntimeV37
         globals()['glm_rt'] = GLMRuntimeV37()
         
@@ -1296,7 +1322,7 @@ except Exception as e:
       return;
     }
     setGLMStatus('booting');
-    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.19.0...");
+    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.25.0...");
     
     const bootCode = `
 import os
@@ -1330,6 +1356,19 @@ for k in list(sys.modules.keys()):
         sys.modules.pop(k, None)
 
 try:
+    # Ensure ubp_unified_v5.py is available (the core Golay/Leech math engine)
+    import os
+    ubp_path = os.path.join('/home/pyodide', 'ubp_unified_v5.py')
+    if not os.path.exists(ubp_path):
+        log_to_js("Fetching ubp_unified_v5.py engine from GitHub...")
+        try:
+            import urllib.request
+            url = 'https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py'
+            urllib.request.urlretrieve(url, ubp_path)
+            log_to_js("ubp_unified_v5.py engine loaded.")
+        except Exception as dl_err:
+            log_to_js(f"Warning: Could not fetch ubp_unified_v5.py ({dl_err}). Using fallback stub — quality reduced.")
+
     log_to_js("Loading GLMRuntimeV37 from GLM11_runtime...")
     from GLM11_runtime import GLMRuntimeV37
     log_to_js("Instantiating GLMRuntimeV37...")
@@ -1346,7 +1385,7 @@ except Exception as e:
       const res = await pyodideService.runPython(bootCode);
       if (res.stdout.includes("SUCCESS")) {
         setGLMStatus('online');
-        addGLMConsoleLog('system', "GLM v3.19.0 loaded successfully and is now ONLINE.");
+        addGLMConsoleLog('system', "GLM v3.25.0 loaded successfully and is now ONLINE.");
         await updateGLMStates();
       } else {
         setGLMStatus('offline');
@@ -1456,6 +1495,15 @@ try:
         for k in list(sys.modules.keys()):
             if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
                 sys.modules.pop(k, None)
+        # Ensure ubp_unified_v5.py is available
+        import os as _os
+        _ubp_path = _os.path.join('/home/pyodide', 'ubp_unified_v5.py')
+        if not _os.path.exists(_ubp_path):
+            try:
+                import urllib.request as _urllib
+                _urllib.urlretrieve('https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py', _ubp_path)
+            except Exception:
+                pass
         from GLM11_runtime import GLMRuntimeV37
         globals()['glm_rt'] = GLMRuntimeV37()
         
