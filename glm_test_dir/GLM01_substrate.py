@@ -171,6 +171,25 @@ else:
     class _GolayCodeEngine:
         def snap_to_codeword(self, v24):
             return list(v24), {"anchor_distance": 0, "anchor_id": "self"}
+        def encode(self, msg12):
+            """Minimal Golay(24,12) encode: systematic form with identity + parity."""
+            msg = list(msg12)
+            if len(msg) < 12:
+                msg = msg + [0] * (12 - len(msg))
+            # Simple parity extension: append 12 parity bits
+            # (Real engine uses full generator matrix; this is a minimal stub)
+            parity = [0] * 12
+            for i in range(12):
+                if msg[i]:
+                    for j in range(12):
+                        parity[j] ^= ((i + j) % 2)
+            return msg + parity
+        def decode(self, v24):
+            return list(v24)[:12]
+        def syndrome(self, v24): return [0]
+        def syndrome_weight(self, v24): return 0
+        def get_octads(self): return []
+        def get_all_codewords(self): return []
     class _LeechLatticeEngine:
         def __init__(self, golay): self.golay = golay
         def calculate_nrci(self, vec):

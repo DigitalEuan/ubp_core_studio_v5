@@ -146,6 +146,8 @@ def compose_response(
     # v3.19.0: new kwargs for answer extraction + verification
     answer_block: Optional[Any] = None,
     verified: Optional[str] = None,
+    # v3.25.0: GLM35 ParagraphComposer generated paragraph
+    generated: Optional[str] = None,
 ) -> str:
     """Weaves internal state into a coherent multi-layered response."""
     
@@ -259,7 +261,11 @@ def compose_response(
         except Exception:
             pass
 
-    # K. Fallback
+    # K. v3.25.0: GLM35 ParagraphComposer generated paragraph
+    if generated:
+        parts.append(f"[Generated] {generated}")
+
+    # L. Fallback
     if not parts:
         parts.append("I am listening. Name a concept or provide a mathematical expression to begin.")
 
