@@ -335,12 +335,22 @@ class GLMRuntimeV37:
         return recalled[:5]
 
     def last_diag(self) -> Dict[str, Any]:
-        return {
+        diag = {
             "compute": self._last_compute,
             "symbolic": self._last_symbolic,
             "warm_start": self._last_warm_start,
-            "pivot_spawned": self._last_pivot_spawned
+            "pivot_spawned": self._last_pivot_spawned,
         }
+        # v3.26.0: Include topological health diagnostics
+        try:
+            from GLM_tools_v2 import topological_health, ghost_filter
+            diag["topology"] = topological_health(self.crg)
+            gf = ghost_filter(self.crg, self.vocab, nrci_threshold=0.3, min_connections=0)
+            diag["ghost_count"] = gf["ghost_count"]
+            diag["ghost_rate"] = gf["ghost_rate"]
+        except Exception:
+            pass
+        return diag
 
     def _run_pipeline(self, query: str) -> dict:
         """Shared pipeline for both chat() and chat_prose().
@@ -411,6 +421,23 @@ class GLMRuntimeV37:
             )
             content.append((u, self.vocab_dict[u]))
             print(f"\n[GLM Runtime] Dynamically learned new word: '{u}' as {tag['category']}")
+
+        # 4b. v3.26.0: Ghost Filter — suppress hallucinated learned words.
+        #     Words with high NRCI but zero CRG connections are "ghosts"
+        #     (LAW_TOPOLOGICAL_TENACITY_001). Remove them from content.
+        try:
+            from GLM_tools_v2 import ghost_filter
+            if content:
+                gf = ghost_filter(self.crg, self.vocab, nrci_threshold=0.3, min_connections=0)
+                ghost_words = {g["word"] for g in gf["ghosts"]}
+                if ghost_words:
+                    filtered = [(w, e) for w, e in content if w not in ghost_words]
+                    removed = len(content) - len(filtered)
+                    if removed > 0:
+                        content = filtered
+                        print(f"[GLM Runtime] Ghost filter: removed {removed} hallucinated word(s)")
+        except Exception:
+            pass
 
         # 5. Warm-start check (before update)
         if content:
