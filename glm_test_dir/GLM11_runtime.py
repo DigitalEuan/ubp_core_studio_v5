@@ -602,22 +602,16 @@ class GLMRuntimeV37:
         [Answer] and [Verified] blocks are appended.
         """
         state = self._run_pipeline(query)
-        kwargs = {
-            "deliberation": state["deliberation"],
-            "recalled": state["recalled"],
-            "answer_block": state.get("answer_block"),
-            "verified": state.get("verified"),
-            "generated": state.get("generated"),
-        }
-        # Filter kwargs to only those accepted by compose_response (handles stale Pyodide file cache)
-        import inspect
-        sig = inspect.signature(compose_response)
-        valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
         return compose_response(
             state["query"], state["content"], state["unknown"],
             state["zone"], state["manager"], self.vocab,
             state["qtype"], state["compute"], state["symbolic"],
-            **valid_kwargs
+            deliberation=state["deliberation"],
+            recalled=state["recalled"],
+            # v3.19.0: new kwargs
+            answer_block=state.get("answer_block"),
+            verified=state.get("verified"),
+            generated=state.get("generated"),
         )
 
     def chat_prose(self, query: str, fresh: bool = False) -> str:
@@ -643,26 +637,21 @@ class GLMRuntimeV37:
             self._turn = 0
         state = self._run_pipeline(query)
         from GLM19_prose_composer import compose_prose
-        kwargs = {
-            "compute_result": state["compute"],
-            "symbolic_result": state["symbolic"],
-            "warm_start": state["warm_start"],
-            "deliberation": state["deliberation"],
-            "recalled": state["recalled"],
-            "turn": state["turn"],
-            "answer_block": state.get("answer_block"),
-            "verified": state.get("verified"),
-            "generated": state.get("generated"),
-        }
-        # Filter kwargs to only those accepted by compose_prose (handles stale Pyodide file cache)
-        import inspect
-        sig = inspect.signature(compose_prose)
-        valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
         return compose_prose(
             state["query"], state["content"], state["unknown"],
             state["zone"], state["manager"], self.vocab,
             state["qtype"],
-            **valid_kwargs
+            compute_result=state["compute"],
+            symbolic_result=state["symbolic"],
+            warm_start=state["warm_start"],
+            deliberation=state["deliberation"],
+            recalled=state["recalled"],
+            turn=state["turn"],
+            # v3.19.0: new kwargs
+            answer_block=state.get("answer_block"),
+            verified=state.get("verified"),
+            # v3.22.0: ontological grammar generation
+            generated=state.get("generated"),
         )
 
     def chat_considered(self, query: str, fresh: bool = False) -> str:
