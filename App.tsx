@@ -159,27 +159,25 @@ export const App: React.FC = () => {
 
   const fetchGLMFolderRecursive = async (path: string): Promise<FileTab[]> => {
     try {
-      const repoApiUrl = `https://api.github.com/repos/DigitalEuan/UBP_Repo/contents/${path}`;
+      const repoApiUrl = `https://api.github.com/repos/DigitalEuan/ubp_core_studio_v5/contents/${path}`;
       const res = await fetch(repoApiUrl);
       if (!res.ok) return [];
       const items = await res.json();
       
       let folderFiles: FileTab[] = [];
       const promises = items.map(async (item: any) => {
-        // Filter out old glm_ prefixed scripts, but not the .json resource databases
-        if (item.name.toLowerCase().startsWith('glm_') && !item.name.toLowerCase().endsWith('.json')) {
-          return null;
-        }
+
         if (item.type === 'file') {
           if (item.name.endsWith('.py') || item.name.endsWith('.json') || item.name.endsWith('.md')) {
             try {
               const fileRes = await fetch(item.download_url);
               if (fileRes.ok) {
-                const relativePath = item.path.substring('core_studio_v4.0/GLM/'.length);
+                const prefix = path.endsWith('/') ? path : `${path}/`;
+                const relativePath = item.path.startsWith(prefix) ? item.path.substring(prefix.length) : item.name;
                 let content = await fileRes.text();
                 
                 // Hot-patch the GitHub code to fix bugs
-                if (relativePath === 'GLM11_runtime.py') {
+                if (false && relativePath === 'GLM11_runtime.py') {
                     // Fix idea_state format
                     content = content.replace(
                         'return {"turn": self._turn, "zones": len(self.manager.zones), "meta": self.meta_graph.stats()}',
@@ -253,32 +251,16 @@ export const App: React.FC = () => {
                     );
                 } else if (relativePath === 'GLM10_response_composer.py') {
                     // Accept recalled argument
-                    if (!content.includes('recalled: Optional[List')) {
-                        content = content.replace(
-                            'deliberation: Optional[Dict] = None # <--- ADDED',
-                            'deliberation: Optional[Dict] = None, recalled: Optional[List] = None'
-                        );
-                    }
+                    content = content.replace(
+                        'deliberation: Optional[Dict] = None # <--- ADDED',
+                        'deliberation: Optional[Dict] = None, recalled: Optional[List] = None'
+                    );
                     
                     if (!content.includes('if recalled:')) {
                         content = content.replace(
                             '    return "  ".join(parts)',
                             '    if recalled:\n        parts.append(f"[Recall] {recalled}")\n    return "  ".join(parts)'
                         );
-                    }
-
-                    // v3.25.0: Add generated parameter (GLM35 ParagraphComposer output)
-                    if (!content.includes('generated: Optional[')) {
-                        content = content.replace(
-                            'verified: Optional[str] = None,\n) -> str:',
-                            'verified: Optional[str] = None,\n    # v3.25.0: GLM35 ParagraphComposer generated paragraph\n    generated: Optional[str] = None,\n) -> str:'
-                        );
-                        if (!content.includes('[Generated]')) {
-                            content = content.replace(
-                                '    # K. Fallback',
-                                '    # K. v3.25.0: GLM35 ParagraphComposer generated paragraph\n    if generated:\n        parts.append(f"[Generated] {generated}")\n\n    # L. Fallback'
-                            );
-                        }
                     }
                 }
 
@@ -782,18 +764,22 @@ if '/home/pyodide' not in sys.path:
         addConsoleLog('system', 'Loading GLM Workspace files...');
         try {
             const localGLMFilesList = [
-                'GLM00_config.py', 'GLM01_substrate.py', 'GLM02_constants.py', 'GLM03_crg.py',
-                'GLM04_number_vocab.py', 'GLM05_idea_evidence.py', 'GLM06_idea_zone.py', 'GLM07_idea_manager.py',
-                'GLM08_idea_meta_graph.py', 'GLM09_tools.py', 'GLM10_response_composer.py', 'GLM11_runtime.py',
-                'GLM12_cli_entry.py', 'GLM13_deliberative_reasoning.py', 'GLM14_lexer.py', 'GLM15_physics_pack.py',
-                'GLM16_master_resource.py', 'GLM17_semantic_frames.py', 'GLM18_hex_colour.py', 'GLM19_prose_composer.py',
-                'GLM20_svd_vocab.py', 'GLM21_generator.py', 'GLM22_ontological_grammar.py', 'GLM23_grammar_vectors.py',
-                'GLM24_continuous_learner.py', 'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py',
-                'GLM28_native_poly.py', 'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py',
-                'GLM32_mode_algebra.py', 'GLM33_considered_response.py', 'GLM34_simplicial_crg.py',
-                'GLM35_paragraph_composer.py',
-                'test_v321_levelling.py', 'golden_cases.json', 'run_golden_cases.py',
-                'glm_unified_resource.json', 'glm_master_resource_v1.json'
+                'DYNAMIC_LEARNING_GEOMETRIC_MEMORY.py', 'GLM.py', 'GLM00_config.py', 'GLM01_substrate.py',
+                'GLM02_constants.py', 'GLM03_crg.py', 'GLM04_number_vocab.py', 'GLM05_idea_evidence.py',
+                'GLM06_idea_zone.py', 'GLM07_idea_manager.py', 'GLM08_idea_meta_graph.py', 'GLM09_tools.py',
+                'GLM10_response_composer.py', 'GLM11_runtime.py', 'GLM12_cli_entry.py', 'GLM13_deliberative_reasoning.py',
+                'GLM14_lexer.py', 'GLM15_physics_pack.py', 'GLM16_master_resource.py', 'GLM17_semantic_frames.py',
+                'GLM18_hex_colour.py', 'GLM19_prose_composer.py', 'GLM20_svd_vocab.py', 'GLM21_generator.py',
+                'GLM22_ontological_grammar.py', 'GLM23_grammar_vectors.py', 'GLM24_continuous_learner.py',
+                'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py', 'GLM28_native_poly.py',
+                'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py', 'GLM32_mode_algebra.py',
+                'GLM33_considered_response.py', 'GLM34_simplicial_crg.py', 'GLM35_paragraph_composer.py',
+                'GLM_CRG_EXPANDED.py', 'GLM_CRG_MASSIVE.py', 'GLM_WordsAbsorber.py', 'GLM_advanced.py',
+                'GLM_benchmark.py', 'GLM_geometric_compute.py', 'GLM_persistence.py', 'GLM_sandbox.py',
+                'GLM_tools.py', 'glm_master_resource_v1.json', 'glm_unified_resource.json',
+                'golden_baseline_results.json', 'golden_cases.json', 'idea_meta_graph.json',
+                'refined_nrci.py', 'reset_cache.py', 'run_golden_cases.py', 'test_v321_levelling.py',
+                'v37_test_results.json'
             ];
             
             let fetchedGLM: FileTab[] = [];
@@ -821,7 +807,7 @@ if '/home/pyodide' not in sys.path:
             
             if (!loadedLocally || fetchedGLM.length === 0) {
                 addConsoleLog('system', 'Local GLM files not found. Falling back to fetching from GitHub...');
-                fetchedGLM = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+                fetchedGLM = await fetchGLMFolderRecursive('glm_test_dir');
             } else {
                 addConsoleLog('system', 'Successfully loaded GLM Workspace files from local workspace.');
             }
@@ -1173,15 +1159,6 @@ try:
         for k in list(sys.modules.keys()):
             if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
                 sys.modules.pop(k, None)
-        # Ensure ubp_unified_v5.py is available
-        import os as _os
-        _ubp_path = _os.path.join('/home/pyodide', 'ubp_unified_v5.py')
-        if not _os.path.exists(_ubp_path):
-            try:
-                import urllib.request as _urllib
-                _urllib.urlretrieve('https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py', _ubp_path)
-            except Exception:
-                pass
         from GLM11_runtime import GLMRuntimeV37
         globals()['glm_rt'] = GLMRuntimeV37()
         
@@ -1316,13 +1293,69 @@ except Exception as e:
       setGLMFiles(prev => prev.map(f => f.name === name ? { ...f, content } : f));
   };
 
+  const handleSyncFromWorkspace = async () => {
+    addGLMConsoleLog('system', "Syncing GLM files from container workspace filesystem...");
+    const localGLMFilesList = [
+        'DYNAMIC_LEARNING_GEOMETRIC_MEMORY.py', 'GLM.py', 'GLM00_config.py', 'GLM01_substrate.py',
+        'GLM02_constants.py', 'GLM03_crg.py', 'GLM04_number_vocab.py', 'GLM05_idea_evidence.py',
+        'GLM06_idea_zone.py', 'GLM07_idea_manager.py', 'GLM08_idea_meta_graph.py', 'GLM09_tools.py',
+        'GLM10_response_composer.py', 'GLM11_runtime.py', 'GLM12_cli_entry.py', 'GLM13_deliberative_reasoning.py',
+        'GLM14_lexer.py', 'GLM15_physics_pack.py', 'GLM16_master_resource.py', 'GLM17_semantic_frames.py',
+        'GLM18_hex_colour.py', 'GLM19_prose_composer.py', 'GLM20_svd_vocab.py', 'GLM21_generator.py',
+        'GLM22_ontological_grammar.py', 'GLM23_grammar_vectors.py', 'GLM24_continuous_learner.py',
+        'GLM25_native_alu.py', 'GLM26_crg_alu.py', 'GLM27_crg_expander.py', 'GLM28_native_poly.py',
+        'GLM29_answer_extractor.py', 'GLM30_domain_filter.py', 'GLM31_verification.py', 'GLM32_mode_algebra.py',
+        'GLM33_considered_response.py', 'GLM34_simplicial_crg.py', 'GLM35_paragraph_composer.py',
+        'GLM_CRG_EXPANDED.py', 'GLM_CRG_MASSIVE.py', 'GLM_WordsAbsorber.py', 'GLM_advanced.py',
+        'GLM_benchmark.py', 'GLM_geometric_compute.py', 'GLM_persistence.py', 'GLM_sandbox.py',
+        'GLM_tools.py', 'glm_master_resource_v1.json', 'glm_unified_resource.json',
+        'golden_baseline_results.json', 'golden_cases.json', 'idea_meta_graph.json',
+        'refined_nrci.py', 'reset_cache.py', 'run_golden_cases.py', 'test_v321_levelling.py',
+        'v37_test_results.json'
+    ];
+    let fetchedGLM: FileTab[] = [];
+    let successCount = 0;
+    
+    for (const filename of localGLMFilesList) {
+        try {
+            const res = await fetch(`/glm_test_dir/${filename}`);
+            if (res.ok) {
+                const content = await res.text();
+                fetchedGLM.push({
+                    name: filename,
+                    content: content,
+                    type: filename.endsWith('.py') ? 'script' : 'data'
+                });
+                successCount++;
+            }
+        } catch (e) {
+            console.error(`Failed to fetch ${filename} from workspace:`, e);
+        }
+    }
+    
+    if (fetchedGLM.length > 0) {
+        setGLMFiles(fetchedGLM);
+        if (isPyodideReady) {
+            for (const f of fetchedGLM) {
+                await pyodideService.writeFile(f.name, f.content);
+            }
+        }
+        addGLMConsoleLog('system', `Successfully synchronized ${successCount} GLM files from container workspace (and updated browser Pyodide FS).`);
+        if (fetchedGLM.length > 0 && !activeGLMTabId) {
+            setActiveGLMTabId(fetchedGLM[0].name);
+        }
+    } else {
+        addGLMConsoleLog('error', "No local GLM files could be retrieved from container /glm_test_dir/.");
+    }
+  };
+
   const bootGLMRuntime = async () => {
     if (!isPyodideReady) {
       addGLMConsoleLog('error', "Cannot boot GLM: Pyodide Kernel is not ready.");
       return;
     }
     setGLMStatus('booting');
-    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.25.0...");
+    addGLMConsoleLog('system', "Booting Geometric Language Machine (GLM) v3.19.0...");
     
     const bootCode = `
 import os
@@ -1356,19 +1389,6 @@ for k in list(sys.modules.keys()):
         sys.modules.pop(k, None)
 
 try:
-    # Ensure ubp_unified_v5.py is available (the core Golay/Leech math engine)
-    import os
-    ubp_path = os.path.join('/home/pyodide', 'ubp_unified_v5.py')
-    if not os.path.exists(ubp_path):
-        log_to_js("Fetching ubp_unified_v5.py engine from GitHub...")
-        try:
-            import urllib.request
-            url = 'https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py'
-            urllib.request.urlretrieve(url, ubp_path)
-            log_to_js("ubp_unified_v5.py engine loaded.")
-        except Exception as dl_err:
-            log_to_js(f"Warning: Could not fetch ubp_unified_v5.py ({dl_err}). Using fallback stub — quality reduced.")
-
     log_to_js("Loading GLMRuntimeV37 from GLM11_runtime...")
     from GLM11_runtime import GLMRuntimeV37
     log_to_js("Instantiating GLMRuntimeV37...")
@@ -1385,7 +1405,7 @@ except Exception as e:
       const res = await pyodideService.runPython(bootCode);
       if (res.stdout.includes("SUCCESS")) {
         setGLMStatus('online');
-        addGLMConsoleLog('system', "GLM v3.25.0 loaded successfully and is now ONLINE.");
+        addGLMConsoleLog('system', "GLM v3.19.0 loaded successfully and is now ONLINE.");
         await updateGLMStates();
       } else {
         setGLMStatus('offline');
@@ -1445,6 +1465,39 @@ except Exception as e:
     }
   };
 
+  const handleOpen3DGraph = async () => {
+    try {
+      if (glmStatus !== 'online') {
+        addGLMConsoleLog('system', "GLM is offline. Triggering auto-boot...");
+        await bootGLMRuntime();
+      }
+      addGLMConsoleLog('system', "Generating 3D Concept Space constellation layout...");
+      const pyCode = `
+import sys
+if '/home/pyodide' not in sys.path:
+    sys.path.insert(0, '/home/pyodide')
+from GLM import GLM
+g = GLM()
+if 'glm_rt' in globals():
+    g.rt = globals()['glm_rt']
+res = g.visualize("graph3d.html")
+print(res)
+`;
+      const res = await pyodideService.runPython(pyCode);
+      if (res.stdout) {
+        addGLMConsoleLog('stdout', res.stdout);
+      }
+      
+      const htmlContent = await pyodideService.readFile("graph3d.html");
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      addGLMConsoleLog('system', "Interactive 3D Force-Directed Graph opened successfully in a new browser tab!");
+    } catch (e: any) {
+      addGLMConsoleLog('error', `Failed to open 3D Force Graph: ${e.message}`);
+    }
+  };
+
   const handleSendGLMMessage = async (text: string) => {
     if (isGLMChatLoading) return;
     
@@ -1495,15 +1548,6 @@ try:
         for k in list(sys.modules.keys()):
             if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification']):
                 sys.modules.pop(k, None)
-        # Ensure ubp_unified_v5.py is available
-        import os as _os
-        _ubp_path = _os.path.join('/home/pyodide', 'ubp_unified_v5.py')
-        if not _os.path.exists(_ubp_path):
-            try:
-                import urllib.request as _urllib
-                _urllib.urlretrieve('https://raw.githubusercontent.com/DigitalEuan/UBP_Repo/main/core_studio_v4.0/core/ubp_unified_v5.py', _ubp_path)
-            except Exception:
-                pass
         from GLM11_runtime import GLMRuntimeV37
         globals()['glm_rt'] = GLMRuntimeV37()
         
@@ -1670,7 +1714,7 @@ import sys
 
 # Clear module cache to load latest content
 for k in list(sys.modules.keys()):
-    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+    if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification', 'learning', 'response_composer', 'runtime']):
         sys.modules.pop(k, None)
 
 old_argv = sys.argv
@@ -1713,7 +1757,7 @@ import sys
 
 # Clear module cache to load latest content
 for k in list(sys.modules.keys()):
-    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+    if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification', 'learning', 'response_composer', 'runtime']):
         sys.modules.pop(k, None)
 
 old_argv = sys.argv
@@ -1756,7 +1800,7 @@ import sys
 
 # Clear module cache to load latest content
 for k in list(sys.modules.keys()):
-    if any(p in k for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger']):
+    if any(p in k.lower() for p in ['glm', 'bla', 'semantic', 'critpt', 'crg', 'concept', 'grammar', 'lexer', 'auto_trigger', 'ubp', 'fom', 'alu', 'poly', 'filter', 'verification', 'learning', 'response_composer', 'runtime']):
         sys.modules.pop(k, None)
 
 old_argv = sys.argv
@@ -2622,9 +2666,16 @@ finally:
                         🧪 Self-Tests
                      </button>
                      <button 
+                        onClick={handleSyncFromWorkspace}
+                        className="bg-amber-950/40 hover:bg-amber-900/50 text-amber-400 px-2.5 py-1 text-xs font-bold rounded border border-amber-900/30 flex items-center gap-1"
+                        title="Synchronize GLM files directly from your workspace container directory (/glm_test_dir/)"
+                     >
+                        📂 Sync Workspace
+                     </button>
+                     <button 
                         onClick={async () => {
                           addGLMConsoleLog('system', "Syncing GLM files from GitHub...");
-                          const fetched = await fetchGLMFolderRecursive('core_studio_v4.0/GLM');
+                          const fetched = await fetchGLMFolderRecursive('glm_test_dir');
                           if (fetched.length > 0) {
                             setGLMFiles(fetched);
                             addGLMConsoleLog('system', `Successfully pulled ${fetched.length} files.`);
@@ -2858,12 +2909,19 @@ finally:
                       <div id="glm-visual" className="h-full overflow-y-auto p-4 space-y-4 bg-[#0a0806] scrollbar-thin flex flex-col items-center justify-center">
                           <h4 className="text-sm font-bold uppercase tracking-wider text-amber-500 mb-2 font-mono flex items-center gap-1.5">✨ Concept Constellation Visualization</h4>
                           
+                          <button
+                              onClick={handleOpen3DGraph}
+                              className="bg-amber-600 hover:bg-amber-500 text-black font-bold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-[0_0_15px_rgba(217,119,6,0.3)] transition-all font-mono"
+                          >
+                              🌐 Open Interactive 3D Force Graph (New Tab)
+                          </button>
+
                           {glmIdeaState ? (
                               <div className="w-full flex-1 flex flex-col items-center justify-center border border-amber-900/30 bg-black/40 rounded-lg p-4">
                                   <GLMConstellation stateJson={glmIdeaState} />
                               </div>
                           ) : (
-                              <div className="text-gray-600 italic font-mono text-xs">No data to visualize. Fetch idea state first.</div>
+                              <div className="text-gray-600 italic font-mono text-xs">No local 2D data to visualize yet. Click above to open the 3D Graph, or run a chat first.</div>
                           )}
                       </div>
                   )}

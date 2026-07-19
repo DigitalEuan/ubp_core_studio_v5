@@ -40,11 +40,11 @@ export const AIProviderSelector: React.FC<AIProviderSelectorProps> = ({
     {
       id: 'glm',
       name: 'GLM Reasoner',
-      description: 'Run queries through the Python GLM v3.25.0 Kernel in Pyodide',
+      description: 'Run queries through the Python GLM v3.7.3 Kernel in Pyodide',
       type: 'local',
       icon: '📐',
       status: 'available',
-      models: ['GLM v3.25.0 (Grown)'],
+      models: ['GLM v3.7.3 (Grown)'],
     },
     {
       id: 'ollama',

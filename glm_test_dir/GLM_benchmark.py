@@ -352,3 +352,14 @@ class GLMBenchmark:
 
 if __name__ == "__main__":
     print("=== GLM Benchmark Suite ===")
+    import os
+    import sys
+    # Add parent directory to path so imports work correctly
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from GLM import GLM
+    print("Initializing GLM Engine...")
+    rt = GLM()
+    print("Running full benchmark suite...")
+    suite = GLMBenchmark(rt)
+    results = suite.run_full_benchmark()
+    suite.print_report(results)

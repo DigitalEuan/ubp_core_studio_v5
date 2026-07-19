@@ -46,7 +46,7 @@ QUADRANT_FORCING_ENABLED = _os.environ.get("GLM_QUADRANT_FORCING", "0") == "1"
 from collections import Counter, defaultdict
 import numpy as np
 
-from GLM00_config import UBP_CORE_PATH
+from GLM00_config import UBP_CORE_PATH, get_master_resource_path
 from GLM01_substrate import (
     WordEntry, BLA, GOLAY_ENGINE, LEECH_ENGINE, _get_mog_category,
     vector_to_hex_int, MOG_CATEGORIES,
@@ -65,7 +65,7 @@ def gather_corpus() -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
     word_roles: Dict[str, str] = {}
 
     # Source 1: Master resource definitions
-    path = UBP_CORE_PATH / "glm_master_resource_v1.json"
+    path = get_master_resource_path()
     if path.exists():
         with open(path) as f:
             mr = json.load(f)
@@ -565,7 +565,7 @@ def inject_grammar_vectors(words: dict) -> dict:
 def grammar_vector_status() -> dict:
     """Report grammar vector status."""
     return {
-        "available": (UBP_CORE_PATH / "glm_master_resource_v1.json").exists(),
+        "available": get_master_resource_path().exists(),
         "cached": _grammar_vectors_cache is not None,
         "cache_size": len(_grammar_vectors_cache) if _grammar_vectors_cache else 0,
     }

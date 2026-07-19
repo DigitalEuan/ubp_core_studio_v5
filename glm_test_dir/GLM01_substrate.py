@@ -169,29 +169,91 @@ if _HAS_REAL_ENGINE:
 else:
     # Fallback to stub (should never happen if ubp_unified_v5.py is present)
     class _GolayCodeEngine:
-        def snap_to_codeword(self, v24):
-            return list(v24), {"anchor_distance": 0, "anchor_id": "self"}
-        def encode(self, msg12):
-            """Minimal Golay(24,12) encode: systematic form with identity + parity."""
-            msg = list(msg12)
+        def __init__(self):
+            # Systematic generator matrix P (12 x 12) for standard extended Golay(24,12)
+            self.P = [
+                [1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1],
+                [1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1],
+                [0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1],
+                [1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1],
+                [1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1],
+                [1, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1],
+                [0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1],
+                [0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1],
+                [0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1],
+                [1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1],
+                [0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1],
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            ]
+            self._all_codewords = []
+            for i in range(4096):
+                msg = [(i >> (11 - j)) & 1 for j in range(12)]
+                parity = [0] * 12
+                for r in range(12):
+                    if msg[r]:
+                        for c in range(12):
+                            parity[c] ^= self.P[r][c]
+                self._all_codewords.append(msg + parity)
+
+            # Pre-pack codewords to integers for fast Hamming search
+            self._all_cw_ints = []
+            for cw in self._all_codewords:
+                val = 0
+                for idx, b in enumerate(cw):
+                    if b: val |= 1 << (23 - idx)
+                self._all_cw_ints.append(val)
+
+        def encode(self, msg12: List[int]) -> List[int]:
+            msg = list(msg12)[:12]
             if len(msg) < 12:
-                msg = msg + [0] * (12 - len(msg))
-            # Simple parity extension: append 12 parity bits
-            # (Real engine uses full generator matrix; this is a minimal stub)
+                msg += [0] * (12 - len(msg))
             parity = [0] * 12
-            for i in range(12):
-                if msg[i]:
-                    for j in range(12):
-                        parity[j] ^= ((i + j) % 2)
+            for r in range(12):
+                if msg[r]:
+                    for c in range(12):
+                        parity[c] ^= self.P[r][c]
             return msg + parity
-        def decode(self, v24):
+
+        def decode(self, v24: List[int]) -> List[int]:
             return list(v24)[:12]
-        def syndrome(self, v24): return [0]
-        def syndrome_weight(self, v24): return 0
-        def get_octads(self): return []
-        def get_all_codewords(self): return []
+
+        def get_all_codewords(self) -> List[List[int]]:
+            return self._all_codewords
+
+        def snap_to_codeword(self, v24: List[int]) -> Tuple[List[int], Dict[str, Any]]:
+            val_vec = 0
+            for idx, b in enumerate(v24):
+                if b: val_vec |= 1 << (23 - idx)
+            best_idx = 0
+            min_dist = 24
+            for idx, cw_int in enumerate(self._all_cw_ints):
+                dist = (val_vec ^ cw_int).bit_count()
+                if dist < min_dist:
+                    min_dist = dist
+                    best_idx = idx
+                    if dist == 0:
+                        break
+            corrected = self._all_codewords[best_idx]
+            correctable = min_dist <= 3
+            return corrected, {
+                "syndrome_weight": min_dist,
+                "corrected": correctable,
+                "anchor_distance": min_dist,
+                "correctable": correctable,
+                "anchor_id": "golay_codeword" if correctable else "uncorrectable"
+            }
+
+        def syndrome(self, v24):
+            return [0] * 12
+        def syndrome_weight(self, v24):
+            _, meta = self.snap_to_codeword(v24)
+            return meta["anchor_distance"]
+        def get_octads(self):
+            return []
+
     class _LeechLatticeEngine:
-        def __init__(self, golay): self.golay = golay
+        def __init__(self, golay):
+            self.golay = golay
         def calculate_nrci(self, vec):
             w = sum(vec)
             if w == 0 or w == 24: return 0.5
@@ -201,6 +263,16 @@ else:
             weights = [sum(s) for s in sextets]
             avg = sum(weights) / 4.0
             return sum(abs(w - avg) for w in weights)
+        symmetry_tax = calculate_symmetry_tax
+        def ontological_health(self, vec):
+            return 1.0 - self.calculate_symmetry_tax(vec)/24.0
+        def nearest_octad_idx(self, seed24):
+            return 0
+        def rank_by_stability(self, points):
+            return sorted(points, key=lambda p: self.calculate_nrci(p), reverse=True)
+        def stats(self):
+            return {"status": "fallback_leech_engine"}
+
     GOLAY_ENGINE = _GolayCodeEngine()
     LEECH_ENGINE = _LeechLatticeEngine(GOLAY_ENGINE)
 
@@ -211,29 +283,12 @@ EDGE_LABELS: Set[str] = {
     "lattice_adjacent", "lattice_adjacent_1", "lattice_adjacent_2",
     "lattice_adjacent_3", "lattice_adjacent_4", "lattice_adjacent_5",
     "auto_proposed", "contradicts", "incompatible_with",
+    # v3.17.0: added "co_occurs" so ContinuousLearner's _check_for_new_edges
+    # and _load_learned_edges can actually add/re-apply learned edges. The
+    # original code called crg.add_edge(..., "co_occurs", ...) but the label
+    # was silently rejected, so learned CRG edges were never added to the
+    # live graph — a fourth bug beyond the three in SESSION_SUMMARY §5.
     "co_occurs",
-    # Expanded CRG labels for natural language generation
-    "contains", "transforms", "mediates", "characterizes",
-    "quantifies", "constrains", "preserves", "violates",
-    "opposes", "stores", "carries", "emits", "absorbs",
-    "binds", "pairs", "condenses", "orders", "localizes",
-    "protects", "corrects", "encodes", "decodes", "sums",
-    "integrates", "decomposes", "generalizes", "abstracts",
-    "maps", "acts_on", "sources", "curves", "attracts",
-    "deflects", "flows", "transfers", "converts", "combines",
-    "separates", "approaches", "diverges", "converges",
-    "oscillates", "resonates", "interferes", "tunnels",
-    "scatters", "implies", "follows", "precedes", "accompanies",
-    "exhibits", "undergoes", "transitions", "excites",
-    "annihilates", "dominates", "renormalizes", "regularizes",
-    "quantizes", "charges", "obeys", "requires", "minimizes",
-    "maximizes", "averages", "fluctuates", "propagates",
-    "rotates", "translates", "reflects", "expands", "contracts",
-    "stretches", "accelerates", "decelerates", "clusters",
-    "grows", "seeds", "records", "connects", "appears",
-    "implements", "unifies", "drives", "governs", "produces",
-    "bends", "redshifts", "delays", "waves", "curved_by",
-    "equation", "predicted", "creates", "governed_by", "caused_by",
 }
 
 @dataclass
